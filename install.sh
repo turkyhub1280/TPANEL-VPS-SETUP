@@ -3,7 +3,7 @@
 # TPANEL COMMERCIAL CLOUD HOSTING & CONTROL ENGINE INSTALLER
 # Client Production Installation Script for Ubuntu 20.04/22.04/24.04 & Debian
 # Zero Plain-Text Source Code • V8 Bytecode Protected • Enterprise Hardened
-# Official Repository: https://github.com/tamimhasan1280/TPANEL-VPS-SETUP
+# Official Repository: https://github.com/turkyhub1280/TPANEL-VPS-SETUP
 # ==============================================================================
 
 set -e
@@ -264,7 +264,7 @@ mkdir -p /var/vmail && chown -R vmail:mail /var/vmail && chmod -R 770 /var/vmail
 # 9. DEPLOY PRE-COMPILED V8 BYTECODE PACKAGE (NO RAW SOURCE CODE)
 # ------------------------------------------------------------------------------
 echo "🔒 Downloading & Deploying Compiled Tpanel Engine Package..."
-RELEASE_URL="https://raw.githubusercontent.com/tamimhasan1280/TPANEL-VPS-SETUP/main/releases/tpanel-core-client.tar.gz"
+RELEASE_URL="https://raw.githubusercontent.com/turkyhub1280/TPANEL-VPS-SETUP/main/releases/tpanel-core-client.tar.gz"
 TEMP_TAR=$(mktemp)
 
 if curl -sSL -f -m 60 "${RELEASE_URL}" -o "${TEMP_TAR}"; then
@@ -274,7 +274,7 @@ if curl -sSL -f -m 60 "${RELEASE_URL}" -o "${TEMP_TAR}"; then
 else
     echo "⚠️ Central release CDN busy, building secure runtime bundle..."
     TEMP_DIR=$(mktemp -d)
-    git clone --depth 1 https://github.com/tamimhasan1280/TPANEL-VPS-SETUP "${TEMP_DIR}"
+    git clone --depth 1 https://github.com/turkyhub1280/TPANEL-VPS-SETUP "${TEMP_DIR}"
     cp -rf "${TEMP_DIR}/"* "${APP_DIR}/"
     rm -rf "${TEMP_DIR}"
 fi

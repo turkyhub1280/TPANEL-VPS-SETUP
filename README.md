@@ -10,7 +10,7 @@
 Run the following command on a clean **Ubuntu (20.04/22.04/24.04)** or **Debian** VPS as root:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/tamimhasan1280/tpanel/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/turkyhub1280/TPANEL-VPS-SETUP/main/install.sh | bash
 ```
 
 ---
