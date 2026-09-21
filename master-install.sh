@@ -13,40 +13,13 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# TTY-safe input helpers
-read_input() {
-    local prompt_text="$1"
-    local var_name="$2"
-    local val=""
-    printf "%s" "$prompt_text" >&2
-    if [ ! -t 0 ] && [ -c /dev/tty ]; then
-        read -r val < /dev/tty 2>/dev/null || read -r val
-    else
-        read -r val
-    fi
-    eval "$var_name=\"\$val\""
-}
-
-prompt_password() {
-    local prompt="$1"
-    local pass=""
-    printf "%s" "$prompt" >&2
-    if [ ! -t 0 ] && [ -c /dev/tty ]; then
-        read -r -s pass < /dev/tty 2>/dev/null || read -r pass < /dev/tty 2>/dev/null || read -r -s pass 2>/dev/null || read -r pass
-    else
-        read -r -s pass 2>/dev/null || read -r pass
-    fi
-    echo "" >&2
-    echo "$pass"
-}
-
-echo ""
+#echo ""
 cat << 'EOF'
   ______ _____                 _ 
  |_   __|  __ \               | |
    | |  | |__) |_ _ _ __   ___| |
    | |  |  ___/ _` | '_ \ / _ \ |
-  _| |_ | |  | (_| | | | |  __/ |
+   _| |_ | |  | (_| | | | |  __/ |
  |_____||_|   \__,_|_| |_|\___|_|
   👑 TPANEL ENTERPRISE — MASTER OWNER CLUSTER DEPLOYMENT
   ⚡ Master Authority Node Setup & Automatic Control Panel Provisioning
@@ -56,98 +29,16 @@ EOF
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 0: MASTER SECURITY PIN GATE (গোপন পিন যাচাইকরণ)
+# MASTER OWNER CREDENTIALS (AUTONOMOUS ZERO-PROMPT MODE)
 # ------------------------------------------------------------------------------
-MASTER_EXPECTED_PIN="${TPANEL_MASTER_PIN:-831246667}"
-PIN_ATTEMPTS=0
-PIN_AUTHENTICATED=false
+MASTER_EXPECTED_PIN="831246667"
+MASTER_EMAIL="tamimhasan1281@gmail.com"
+MASTER_PASS="tamima@01618411290#tamim#01794593698@tpanel%&-+"
 
-echo "🔒 MASTER SECURITY ACCESS VERIFICATION (মাস্টার সিকিউরিটি গেট)"
-echo "--------------------------------------------------------------------------"
-echo "  This private deployment is strictly restricted to authorized owners."
-echo "  The Master Security PIN is required to unlock this installer."
-echo ""
-
-while [ "$PIN_ATTEMPTS" -lt 3 ]; do
-    ENTERED_PIN=$(prompt_password "🔑 Enter Master Security PIN: ")
-    ENTERED_PIN=$(echo "$ENTERED_PIN" | tr -d ' \r\n')
-    
-    if [ "$ENTERED_PIN" = "$MASTER_EXPECTED_PIN" ]; then
-        PIN_AUTHENTICATED=true
-        echo "✅ Master Authority PIN Verified! Access Granted."
-        echo ""
-        break
-    else
-        PIN_ATTEMPTS=$((PIN_ATTEMPTS + 1))
-        REMAINING=$((3 - PIN_ATTEMPTS))
-        if [ "$REMAINING" -gt 0 ]; then
-            echo "❌ Invalid Master PIN! Access Denied (${REMAINING} attempt(s) remaining)."
-            echo ""
-        fi
-    fi
-done
-
-if [ "$PIN_AUTHENTICATED" != "true" ]; then
-    echo "=========================================================================="
-    echo "🚨 ACCESS DENIED: UNAUTHORIZED MASTER NODE DEPLOYMENT TERMINATED!"
-    echo "=========================================================================="
-    echo "  You have exceeded the maximum allowed PIN attempts."
-    echo "  This repository and cluster installer are private property."
-    echo "  Contact: tamimhasan1281@gmail.com"
-    echo "=========================================================================="
-    echo ""
-    exit 1
-fi
-
-echo "👑 MASTER ADMINISTRATOR CREDENTIALS (অ্যাডমিন একাউন্ট সেটআপ)"
-echo "--------------------------------------------------------------------------"
-echo "  Configure your Master Control Panel login credentials."
-echo "  Login is performed directly using your Email and Password."
-echo ""
-
-# Prompt Master Admin Credentials
-MASTER_EMAIL="${TPANEL_MASTER_EMAIL:-}"
-while [ -z "$MASTER_EMAIL" ]; do
-    read_input "👤 Master Administrator Email [tamimhasan1281@gmail.com]: " MASTER_EMAIL
-    MASTER_EMAIL=$(echo "$MASTER_EMAIL" | tr -d ' ')
-    if [ -z "$MASTER_EMAIL" ]; then
-        MASTER_EMAIL="tamimhasan1281@gmail.com"
-    fi
-done
-
-MASTER_REQUIRED_PASS="tamima@01618411290#tamim#01794593698@tpanel%&-+"
-MASTER_PASS="${TPANEL_MASTER_PASS:-}"
-if [ -z "$MASTER_PASS" ]; then
-    PASS_ATTEMPTS=0
-    while [ "$PASS_ATTEMPTS" -lt 3 ]; do
-        ENTERED_PASS=$(prompt_password "🔒 Enter Master Administrator Password: ")
-        if [ "$ENTERED_PASS" != "$MASTER_REQUIRED_PASS" ]; then
-            PASS_ATTEMPTS=$((PASS_ATTEMPTS + 1))
-            REMAINING=$((3 - PASS_ATTEMPTS))
-            echo "❌ Unauthorized Master Password! Only the authorized master owner password is accepted."
-            if [ "$REMAINING" -gt 0 ]; then
-                echo "   (${REMAINING} attempt(s) remaining)"
-                echo ""
-            fi
-            if [ "$PASS_ATTEMPTS" -ge 3 ]; then
-                echo "🚨 Maximum password attempts exceeded. Terminating installer."
-                exit 1
-            fi
-            continue
-        fi
-
-        MASTER_PASS_CONFIRM=$(prompt_password "🔒 Confirm Master Password: ")
-        if [ "$ENTERED_PASS" != "$MASTER_PASS_CONFIRM" ]; then
-            echo "❌ Passwords do not match. Please re-enter."
-            echo ""
-            continue
-        fi
-
-        MASTER_PASS="$ENTERED_PASS"
-        break
-    done
-fi
-
+echo "👑 MASTER ADMINISTRATOR CREDENTIALS AUTO-CONFIGURED:"
+echo "   👤 Master Email : ${MASTER_EMAIL}"
+echo "   🔑 Master PIN   : ${MASTER_EXPECTED_PIN}"
+echo "   🔒 Access Mode  : 100% Fully Autonomous (Zero Manual Prompts)"
 echo ""
 echo "✅ Master credentials recorded. Initializing Enterprise Linux Stack..."
 echo "=========================================================================="
@@ -356,39 +247,22 @@ mkdir -p /var/log
 SSH_BIN=$(command -v ssh || which ssh || echo "/usr/bin/ssh")
 cat << EOF > /etc/systemd/system/tpanel-pinggy.service
 [Unit]
-Description=Tpanel Pinggy Secure Tunnel Service
-After=network.target cpanel-core.service
-Wants=cpanel-core.service
+# ------------------------------------------------------------------------------
+# HIGH-AVAILABILITY REMOTE TUNNELS (CLOUDFLARE + PINGGY NO-FLAP ENGINES)
+# ------------------------------------------------------------------------------
+echo "🌐 Starting High-Availability Remote Access Tunnel Services..."
 
-[Service]
-Type=simple
-User=root
-ExecStart=${SSH_BIN} -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -R0:localhost:3000 a.pinggy.io
-Restart=always
-RestartSec=5
-StandardOutput=file:/var/log/tpanel-pinggy.log
-StandardError=file:/var/log/tpanel-pinggy.log
+# 1. Clean up old tunnel processes
+pkill -9 -f "cloudflared" 2>/dev/null || true
+pkill -9 -f "a.pinggy.io" 2>/dev/null || true
+systemctl stop tpanel-tunnel.service 2>/dev/null || true
+systemctl disable tpanel-tunnel.service 2>/dev/null || true
+systemctl stop tpanel-pinggy.service 2>/dev/null || true
+systemctl disable tpanel-pinggy.service 2>/dev/null || true
+mkdir -p /var/log /etc/tpanel /opt/cpanel-core
+rm -f /var/log/tpanel-tunnel.log /var/log/tpanel-pinggy.log
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable tpanel-pinggy.service 2>/dev/null || true
-systemctl restart tpanel-pinggy.service 2>/dev/null || true
-
-# Extract Pinggy URL
-PINGGY_URL=""
-echo "⏳ Waiting for Pinggy Secure endpoint..."
-for i in $(seq 1 12); do
-    sleep 1
-    PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
-    if [ -n "$PINGGY_URL" ]; then
-        break
-    fi
-done
-
-# 2. Install & Configure Cloudflare Quick Tunnel (Secondary Backup)
+# 2. Install Cloudflare Agent if missing
 if ! command -v cloudflared >/dev/null 2>&1; then
     echo "☁️ Installing Cloudflare Quick Tunnel Agent (cloudflared)..."
     ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
@@ -397,59 +271,76 @@ if ! command -v cloudflared >/dev/null 2>&1; then
     chmod +x /usr/local/bin/cloudflared 2>/dev/null || true
 fi
 
+# 3. Launch Cloudflare Tunnel in background (No-Flap Nohup)
 CF_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
-CF_TUNNEL_URL=""
 if [ -x "$CF_BIN" ]; then
-    echo "☁️ Setting up Cloudflare Quick Tunnel service..."
-    > /var/log/tpanel-tunnel.log 2>/dev/null || true
-    cat << EOF > /etc/systemd/system/tpanel-tunnel.service
-[Unit]
-Description=Tpanel Cloudflare Quick Tunnel Service
-After=network.target cpanel-core.service
-Wants=cpanel-core.service
-
-[Service]
-Type=simple
-User=root
-ExecStart=${CF_BIN} tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable tpanel-tunnel.service 2>/dev/null || true
-    systemctl restart tpanel-tunnel.service 2>/dev/null || true
-
-    for i in $(seq 1 12); do
-        sleep 1
-        CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
-        if [ -n "$CF_TUNNEL_URL" ]; then
-            break
-        fi
-    done
+    echo "☁️ Starting Cloudflare Quick Tunnel daemon..."
+    nohup "${CF_BIN}" tunnel --no-autoupdate --url http://127.0.0.1:3000 > /var/log/tpanel-tunnel.log 2>&1 &
 fi
 
-# Save active tunnel URL in database
-PRIMARY_REMOTE_URL="${PINGGY_URL:-$CF_TUNNEL_URL}"
+# 4. Launch Pinggy SSH Tunnel in background (Port 443 TCP Fail-Safe)
+SSH_BIN=$(command -v ssh || which ssh || echo "/usr/bin/ssh")
+if [ -x "$SSH_BIN" ]; then
+    echo "⚡ Starting Pinggy Secure Tunnel daemon..."
+    nohup "${SSH_BIN}" -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -R0:localhost:3000 a.pinggy.io > /var/log/tpanel-pinggy.log 2>&1 &
+fi
+
+# 5. Wait and extract endpoints (up to 25s)
+echo "⏳ Connecting remote tunnels and generating instant HTTPS access URLs..."
+CF_TUNNEL_URL=""
+PINGGY_URL=""
+
+for i in $(seq 1 25); do
+    sleep 1
+    if [ -z "$CF_TUNNEL_URL" ] && [ -f /var/log/tpanel-tunnel.log ]; then
+        CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
+    fi
+    if [ -z "$PINGGY_URL" ] && [ -f /var/log/tpanel-pinggy.log ]; then
+        PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+    fi
+    if [ -n "$CF_TUNNEL_URL" ] && [ -n "$PINGGY_URL" ]; then
+        break
+    fi
+    if [ -n "$CF_TUNNEL_URL" ] && [ $i -ge 10 ]; then
+        break
+    fi
+done
+
+# Save active tunnel URLs to file and database
+PRIMARY_REMOTE_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
 if [ -n "$PRIMARY_REMOTE_URL" ]; then
     mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('cloudflare_tunnel_url', '${PRIMARY_REMOTE_URL}') ON DUPLICATE KEY UPDATE setting_value = '${PRIMARY_REMOTE_URL}';" 2>/dev/null || true
+    echo "${PRIMARY_REMOTE_URL}" > /etc/tpanel/tunnel_url.txt
 fi
 
-# Mark system installed to bypass legacy redirects
+# Create tpanel-tunnel CLI command for instant URL retrieval
+cat << 'EOF' > /usr/local/bin/tpanel-tunnel
+#!/usr/bin/env bash
+CF_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
+PG_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+echo "=========================================================================="
+echo "  🌐 TPANEL ACTIVE REMOTE TUNNELS"
+echo "=========================================================================="
+if [ -n "$CF_U" ]; then echo "  ☁️ Cloudflare Tunnel : $CF_U"; fi
+if [ -n "$PG_U" ]; then echo "  ⚡ Pinggy Tunnel     : $PG_U"; fi
+if [ -z "$CF_U" ] && [ -z "$PG_U" ]; then echo "  ⚠️ No active tunnel detected in logs."; fi
+echo "=========================================================================="
+EOF
+chmod +x /usr/local/bin/tpanel-tunnel
+
+# Mark system installed
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('installed', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true';" 2>/dev/null || true
 
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
 # Purge plain-text password from memory
-unset MASTER_PASS MASTER_PASS_CONFIRM
+unset MASTER_PASS
 
 # Dispatch Instant Telegram Notification
 TG_BOT="8708204252:AAFeEChJviQXg-JdjOvHU2xHkJGSUD2WjA4"
 TG_CHAT="6365764075"
-TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🚀 *Instant Access URL (Pinggy):*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A☁️ *Cloudflare Tunnel:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Direct Server IP:* http://${SERVER_IP}/"
+TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
 curl -s -m 5 "https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${TG_MSG}&parse_mode=Markdown" >/dev/null 2>&1 || true
 
 echo ""
@@ -462,22 +353,22 @@ echo "  🔑 MASTER LICENSE  : TPNL-MASTER-TAMIM-2026-ROOT (Unlimited Authority)
 echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
-if [ -n "$PINGGY_URL" ]; then
-echo "  👉 🚀 PRIMARY INSTANT ACCESS URL (PINGGY - 100% RELIABLE):"
-echo "     ${PINGGY_URL}/?token=${AUTO_TOKEN}"
-echo "     (Zero Cloudflare Error 1033 • Direct Master Onboarding Wizard)"
+if [ -n "$CF_TUNNEL_URL" ]; then
+echo "  👉 🌐 CLOUDFLARE MASTER ACCESS URL (সরাসরি ব্রাউজারে ওপেন করুন):"
+echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
 echo ""
 fi
-if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🌐 CLOUDFLARE QUICK TUNNEL URL:"
-echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
+if [ -n "$PINGGY_URL" ]; then
+echo "  👉 🚀 PINGGY MASTER ACCESS URL (অল্টারনেটিভ হাই-স্পিড লিঙ্ক):"
+echo "     ${PINGGY_URL}/?token=${AUTO_TOKEN}"
 echo ""
 fi
 echo "  👉 🖥️ DIRECT SERVER IP LOGIN:"
 echo "     http://${SERVER_IP}/"
 echo "     Email: ${MASTER_EMAIL}"
 echo ""
-echo "  🛠️ MASTER CLI TOOL READY:"
+echo "  🛠️ MASTER CLI TOOLS READY:"
+echo "     • View live tunnels         : tpanel-tunnel"
 echo "     • Create new client license : tpanel-license create --instances 1 --name \"Client\""
 echo "     • List all client licenses  : tpanel-license list"
 echo "     • Revoke any client license : tpanel-license revoke <KEY>"
