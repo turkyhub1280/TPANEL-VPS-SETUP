@@ -56,20 +56,20 @@ EOF
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 0: MASTER SECURITY PIN GATE (৬ ডিজিটের গোপন পিন যাচাইকরণ)
+# STEP 0: MASTER SECURITY PIN GATE (গোপন পিন যাচাইকরণ)
 # ------------------------------------------------------------------------------
-MASTER_EXPECTED_PIN="${TPANEL_MASTER_PIN:-128099}"
+MASTER_EXPECTED_PIN="${TPANEL_MASTER_PIN:-831246667}"
 PIN_ATTEMPTS=0
 PIN_AUTHENTICATED=false
 
 echo "🔒 MASTER SECURITY ACCESS VERIFICATION (মাস্টার সিকিউরিটি গেট)"
 echo "--------------------------------------------------------------------------"
 echo "  This private deployment is strictly restricted to authorized owners."
-echo "  A 6-digit Master Security PIN is required to unlock this installer."
+echo "  The Master Security PIN is required to unlock this installer."
 echo ""
 
 while [ "$PIN_ATTEMPTS" -lt 3 ]; do
-    ENTERED_PIN=$(prompt_password "🔑 Enter 6-digit Master Security PIN: ")
+    ENTERED_PIN=$(prompt_password "🔑 Enter Master Security PIN: ")
     ENTERED_PIN=$(echo "$ENTERED_PIN" | tr -d ' \r\n')
     
     if [ "$ENTERED_PIN" = "$MASTER_EXPECTED_PIN" ]; then
@@ -115,19 +115,35 @@ while [ -z "$MASTER_EMAIL" ]; do
     fi
 done
 
+MASTER_REQUIRED_PASS="tamima@01618411290#tamim#01794593698@tpanel%&-+"
 MASTER_PASS="${TPANEL_MASTER_PASS:-}"
 if [ -z "$MASTER_PASS" ]; then
-    while true; do
-        MASTER_PASS=$(prompt_password "🔒 Master Administrator Password: ")
-        if [ ${#MASTER_PASS} -lt 6 ]; then
-            echo "❌ Password must be at least 6 characters long."
+    PASS_ATTEMPTS=0
+    while [ "$PASS_ATTEMPTS" -lt 3 ]; do
+        ENTERED_PASS=$(prompt_password "🔒 Enter Master Administrator Password: ")
+        if [ "$ENTERED_PASS" != "$MASTER_REQUIRED_PASS" ]; then
+            PASS_ATTEMPTS=$((PASS_ATTEMPTS + 1))
+            REMAINING=$((3 - PASS_ATTEMPTS))
+            echo "❌ Unauthorized Master Password! Only the authorized master owner password is accepted."
+            if [ "$REMAINING" -gt 0 ]; then
+                echo "   (${REMAINING} attempt(s) remaining)"
+                echo ""
+            fi
+            if [ "$PASS_ATTEMPTS" -ge 3 ]; then
+                echo "🚨 Maximum password attempts exceeded. Terminating installer."
+                exit 1
+            fi
             continue
         fi
+
         MASTER_PASS_CONFIRM=$(prompt_password "🔒 Confirm Master Password: ")
-        if [ "$MASTER_PASS" != "$MASTER_PASS_CONFIRM" ]; then
+        if [ "$ENTERED_PASS" != "$MASTER_PASS_CONFIRM" ]; then
             echo "❌ Passwords do not match. Please re-enter."
+            echo ""
             continue
         fi
+
+        MASTER_PASS="$ENTERED_PASS"
         break
     done
 fi
