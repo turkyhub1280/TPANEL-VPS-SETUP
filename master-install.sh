@@ -329,7 +329,7 @@ echo "⏳ Connecting remote tunnels and generating instant HTTPS access URLs..."
 CF_TUNNEL_URL=""
 PINGGY_URL=""
 
-for i in $(seq 1 25); do
+for i in $(seq 1 30); do
     sleep 1
     if [ -z "$CF_TUNNEL_URL" ] && [ -f /var/log/tpanel-tunnel.log ]; then
         CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
@@ -340,10 +340,18 @@ for i in $(seq 1 25); do
     if [ -n "$CF_TUNNEL_URL" ] && [ -n "$PINGGY_URL" ]; then
         break
     fi
-    if [ -n "$CF_TUNNEL_URL" ] && [ $i -ge 12 ]; then
-        break
-    fi
 done
+
+# Edge Reachability Pre-Flight Check (Eliminates Error 1033)
+if [ -n "$CF_TUNNEL_URL" ]; then
+    for attempt in $(seq 1 20); do
+        CF_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$CF_TUNNEL_URL" 2>/dev/null || echo "000")
+        if [ "$CF_CODE" = "200" ] || [ "$CF_CODE" = "302" ]; then
+            break
+        fi
+        sleep 2
+    done
+fi
 
 # Save active tunnel URLs to file and database
 PRIMARY_REMOTE_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
