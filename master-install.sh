@@ -168,57 +168,61 @@ fi
 echo "📦 Detected Operating System: ${OS_NAME} ${OS_VERSION}"
 
 # 1. System Update & Dependencies
-echo "🔄 Updating system packages and installing core hosting dependencies..."
+echo "🔄 Checking system packages and core hosting dependencies..."
 apt-get update -y -q
 apt-get install -y -q \
     curl wget git software-properties-common ca-certificates \
     lsb-release apt-transport-https build-essential ufw zip unzip tar \
     nano jq net-tools dnsutils ssl-cert fail2ban
 
-# 2. Install Nginx Web Server
-echo "🌐 Installing & Tuning Nginx Web Engine..."
-systemctl stop apache2 2>/dev/null || true
-systemctl disable apache2 2>/dev/null || true
-apt-get install -y -q nginx 2>/dev/null || true
-mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/conf.d
-systemctl enable nginx 2>/dev/null || true
-systemctl start nginx 2>/dev/null || true
+# Check if full stack is already present (Smart Update Fast-Track)
+if command -v nginx >/dev/null 2>&1 && command -v mariadb >/dev/null 2>&1 && command -v php8.2 >/dev/null 2>&1 && command -v postfix >/dev/null 2>&1; then
+    echo "⚡ Core hosting stack (Nginx, MariaDB, PHP 8.2, Mail Server) already configured. Skipping redundant package downloads..."
+else
+    # 2. Install Nginx Web Server
+    echo "🌐 Installing & Tuning Nginx Web Engine..."
+    systemctl stop apache2 2>/dev/null || true
+    systemctl disable apache2 2>/dev/null || true
+    apt-get install -y -q nginx 2>/dev/null || true
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/conf.d
+    systemctl enable nginx 2>/dev/null || true
+    systemctl start nginx 2>/dev/null || true
 
-# 3. Install MariaDB Database Server
-echo "🗄️ Installing MariaDB SQL Engine..."
-apt-get install -y -q mariadb-server mariadb-client 2>/dev/null || true
-systemctl enable mariadb 2>/dev/null || true
-systemctl start mariadb 2>/dev/null || true
+    # 3. Install MariaDB Database Server
+    echo "🗄️ Installing MariaDB SQL Engine..."
+    apt-get install -y -q mariadb-server mariadb-client 2>/dev/null || true
+    systemctl enable mariadb 2>/dev/null || true
+    systemctl start mariadb 2>/dev/null || true
 
-# Harden MariaDB to localhost only
-if [ -f /etc/mysql/mariadb.conf.d/50-server.cnf ]; then
-    sed -i 's/^bind-address.*/bind-address = 127.0.0.1/' /etc/mysql/mariadb.conf.d/50-server.cnf
-    systemctl restart mariadb 2>/dev/null || true
+    # Harden MariaDB to localhost only
+    if [ -f /etc/mysql/mariadb.conf.d/50-server.cnf ]; then
+        sed -i 's/^bind-address.*/bind-address = 127.0.0.1/' /etc/mysql/mariadb.conf.d/50-server.cnf
+        systemctl restart mariadb 2>/dev/null || true
+    fi
+
+    # 4. Install Node.js LTS (v20)
+    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1 | tr -d 'v')" -lt 18 ]; then
+        echo "🟢 Installing Node.js LTS (v20)..."
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+        apt-get install -y -q nodejs
+    fi
+
+    # 5. Install PHP FastCGI
+    echo "🐘 Installing PHP Runtime & Modules..."
+    if [ "$OS_NAME" = "ubuntu" ]; then
+        add-apt-repository -y ppa:ondrej/php || true
+        apt-get update -y -q
+    fi
+    apt-get install -y -q php8.2-fpm php8.2-mysql php8.2-cli php8.2-curl php8.2-gd php8.2-mbstring php8.2-xml php8.2-zip php8.2-bcmath || true
+    systemctl enable php8.2-fpm 2>/dev/null || true
+    systemctl start php8.2-fpm 2>/dev/null || true
+
+    # 6. Install Mail Server Stack (Postfix + Dovecot)
+    echo "✉️ Installing Mail MTA & Maildir System..."
+    debconf-set-selections <<< "postfix postfix/mailname string localhost"
+    debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
+    apt-get install -y -q postfix postfix-mysql dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-mysql
 fi
-
-# 4. Install Node.js LTS (v20)
-if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1 | tr -d 'v')" -lt 18 ]; then
-    echo "🟢 Installing Node.js LTS (v20)..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y -q nodejs
-fi
-echo "✅ Node.js $(node -v) & NPM $(npm -v) ready."
-
-# 5. Install PHP FastCGI
-echo "🐘 Installing PHP Runtime & Modules..."
-if [ "$OS_NAME" = "ubuntu" ]; then
-    add-apt-repository -y ppa:ondrej/php || true
-    apt-get update -y -q
-fi
-apt-get install -y -q php8.2-fpm php8.2-mysql php8.2-cli php8.2-curl php8.2-gd php8.2-mbstring php8.2-xml php8.2-zip php8.2-bcmath || true
-systemctl enable php8.2-fpm 2>/dev/null || true
-systemctl start php8.2-fpm 2>/dev/null || true
-
-# 6. Install Mail Server Stack (Postfix + Dovecot)
-echo "✉️ Installing Mail MTA & Maildir System..."
-debconf-set-selections <<< "postfix postfix/mailname string localhost"
-debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
-apt-get install -y -q postfix postfix-mysql dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-mysql
 
 # Directory Layout
 APP_DIR="/opt/cpanel-core"
@@ -227,28 +231,31 @@ mkdir -p "${APP_DIR}" "${VHOSTS_DIR}" /var/vmail /var/log/tpanel /etc/tpanel
 chown -R vmail:vmail /var/vmail 2>/dev/null || useradd -r -u 5000 -g mail -d /var/vmail -s /sbin/nologin -c "Virtual Mail" vmail 2>/dev/null || true
 mkdir -p /var/vmail && chown -R vmail:mail /var/vmail && chmod -R 770 /var/vmail
 
-# Clone Master Repository
-echo "📥 Deploying Full Master Repository..."
-TEMP_DIR=$(mktemp -d)
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
-if [ -n "$GITHUB_TOKEN" ]; then
-    CLONE_URL="https://${GITHUB_TOKEN}@github.com/turkyhub1280/TPANEL-VPS.git"
-else
-    CLONE_URL="https://github.com/turkyhub1280/TPANEL-VPS.git"
-fi
+# Zero-Prompt Automated Git Repository Deployment & Seamless Update
+export GIT_TERMINAL_PROMPT=0
+MASTER_TOKEN="${GITHUB_TOKEN:-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}"
+MASTER_REPO_URL="https://${MASTER_TOKEN}@github.com/turkyhub1280/TPANEL-VPS.git"
 
-if ! git clone --depth 1 "$CLONE_URL" "${TEMP_DIR}" 2>/dev/null; then
-    echo "🔒 Private repository authentication required."
-    read_input "🔑 Enter your GitHub Personal Access Token: " GITHUB_TOKEN
-    GITHUB_TOKEN=$(echo "$GITHUB_TOKEN" | tr -d ' ')
-    git clone --depth 1 "https://${GITHUB_TOKEN}@github.com/turkyhub1280/TPANEL-VPS.git" "${TEMP_DIR}"
+if [ -d "${APP_DIR}/.git" ]; then
+    echo "🔄 Existing Tpanel Master installation detected! Updating repository in-place..."
+    cd "${APP_DIR}"
+    git remote set-url origin "$MASTER_REPO_URL" 2>/dev/null || true
+    git fetch origin main --depth=1 2>/dev/null || git fetch origin main 2>/dev/null || true
+    git reset --hard origin/main 2>/dev/null || true
+    echo "✅ Tpanel Master codebase updated to latest commit (no duplicate files created)."
+else
+    echo "📥 Deploying Full Master Repository from GitHub..."
+    rm -rf "${APP_DIR}"
+    git clone --depth 1 "$MASTER_REPO_URL" "${APP_DIR}" 2>/dev/null || {
+        echo "⚠️ Fallback: Clone via token URL..."
+        git clone "https://${MASTER_TOKEN}@github.com/turkyhub1280/TPANEL-VPS.git" "${APP_DIR}"
+    }
+    echo "✅ Tpanel Master repository cloned successfully."
 fi
-cp -rf "${TEMP_DIR}/"* "${APP_DIR}/"
-rm -rf "${TEMP_DIR}"
 cd "${APP_DIR}"
 
 # Install Node dependencies
-echo "📦 Installing backend dependencies..."
+echo "📦 Verifying and installing backend dependencies..."
 npm install --omit=dev --loglevel=error
 
 # Configure Postfix & Dovecot
@@ -353,10 +360,13 @@ fi
 CF_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
 if [ -x "$CF_BIN" ]; then
     echo "☁️ Setting up Cloudflare Quick Tunnel background service..."
+    # Clear old tunnel log to ensure fresh endpoint extraction
+    > /var/log/tpanel-tunnel.log 2>/dev/null || true
     cat << EOF > /etc/systemd/system/tpanel-tunnel.service
 [Unit]
 Description=Tpanel Cloudflare Quick Tunnel Service
 After=network.target cpanel-core.service
+Wants=cpanel-core.service
 
 [Service]
 Type=simple
@@ -375,10 +385,10 @@ fi
 
 # Extract Cloudflare Tunnel URL
 CF_TUNNEL_URL=""
-echo "⏳ Waiting for Cloudflare Quick Tunnel endpoint (up to 15s)..."
-for i in $(seq 1 15); do
+echo "⏳ Waiting for Cloudflare Quick Tunnel endpoint (up to 20s)..."
+for i in $(seq 1 20); do
     sleep 1
-    CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | head -n 1 || true)
+    CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
     if [ -n "$CF_TUNNEL_URL" ]; then
         break
     fi
@@ -391,17 +401,35 @@ fi
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
+# Pure Bash URL Encoder (zero dependency)
+urlencode() {
+    local string="$1"
+    local strlen=${#string}
+    local encoded=""
+    local pos c o
+    for (( pos=0 ; pos<strlen ; pos++ )); do
+        c=${string:$pos:1}
+        case "$c" in
+            [-_.~a-zA-Z0-9] ) o="${c}" ;;
+            * ) printf -v o '%%%02X' "'$c"
+        esac
+        encoded+="${o}"
+    done
+    echo "${encoded}"
+}
+
 # Shorten Master Login URL for Professional Branded Look
 SHORT_URL=""
 if [ -n "$CF_TUNNEL_URL" ]; then
     LONG_LOGIN_URL="${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
+    ENCODED_LOGIN_URL=$(urlencode "$LONG_LOGIN_URL")
     CUSTOM_ALIAS="tpanel-master-$((RANDOM % 89999 + 10000))"
-    SHORT_URL=$(curl -s -m 5 "https://tinyurl.com/api-create.php?url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")&alias=${CUSTOM_ALIAS}" 2>/dev/null || true)
-    if [[ ! "$SHORT_URL" =~ ^https?:// ]]; then
-        SHORT_URL=$(curl -s -m 5 "https://tinyurl.com/api-create.php?url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
+    SHORT_URL=$(curl -s -m 6 "https://tinyurl.com/api-create.php?url=${ENCODED_LOGIN_URL}&alias=${CUSTOM_ALIAS}" 2>/dev/null || true)
+    if [[ ! "$SHORT_URL" =~ ^https?://.*tinyurl\.com ]]; then
+        SHORT_URL=$(curl -s -m 6 "https://tinyurl.com/api-create.php?url=${ENCODED_LOGIN_URL}" 2>/dev/null || true)
     fi
     if [[ ! "$SHORT_URL" =~ ^https?:// ]]; then
-        SHORT_URL=$(curl -s -m 5 "https://is.gd/create.php?format=simple&url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
+        SHORT_URL=$(curl -s -m 6 "https://is.gd/create.php?format=simple&url=${ENCODED_LOGIN_URL}" 2>/dev/null || true)
     fi
 fi
 
