@@ -18,10 +18,11 @@ read_input() {
     local prompt_text="$1"
     local var_name="$2"
     local val=""
+    printf "%s" "$prompt_text" >&2
     if [ ! -t 0 ] && [ -c /dev/tty ]; then
-        read -r -p "$prompt_text" val < /dev/tty 2>/dev/null || read -r -p "$prompt_text" val
+        read -r val < /dev/tty 2>/dev/null || read -r val
     else
-        read -r -p "$prompt_text" val
+        read -r val
     fi
     eval "$var_name=\"\$val\""
 }
@@ -29,7 +30,7 @@ read_input() {
 prompt_password() {
     local prompt="$1"
     local pass=""
-    echo -n "$prompt" >&2
+    printf "%s" "$prompt" >&2
     if [ ! -t 0 ] && [ -c /dev/tty ]; then
         read -r -s pass < /dev/tty 2>/dev/null || read -r pass < /dev/tty 2>/dev/null || read -r -s pass 2>/dev/null || read -r pass
     else
