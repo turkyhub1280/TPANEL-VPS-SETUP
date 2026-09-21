@@ -273,12 +273,9 @@ mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT IN
 if ! command -v cloudflared >/dev/null 2>&1; then
     echo "☁️ Installing Cloudflare Quick Tunnel Agent (cloudflared)..."
     ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
-    curl -fsSL -o /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.deb" 2>/dev/null || \
-    curl -fsSL -o /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb" 2>/dev/null || true
-    if [ -f /tmp/cloudflared.deb ]; then
-        dpkg -i /tmp/cloudflared.deb 2>/dev/null || apt-get install -f -y -q 2>/dev/null || true
-        rm -f /tmp/cloudflared.deb
-    fi
+    curl -fsSL -o /usr/local/bin/cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" 2>/dev/null || \
+    curl -fsSL -o /usr/local/bin/cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" 2>/dev/null || true
+    chmod +x /usr/local/bin/cloudflared 2>/dev/null || true
 fi
 
 CF_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
@@ -306,8 +303,8 @@ fi
 
 # Extract Cloudflare Tunnel URL
 CF_TUNNEL_URL=""
-echo "⏳ Waiting for Cloudflare Quick Tunnel endpoint (up to 8s)..."
-for i in $(seq 1 8); do
+echo "⏳ Waiting for Cloudflare Quick Tunnel endpoint (up to 15s)..."
+for i in $(seq 1 15); do
     sleep 1
     CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | head -n 1 || true)
     if [ -n "$CF_TUNNEL_URL" ]; then
