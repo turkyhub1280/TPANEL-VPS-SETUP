@@ -331,6 +331,16 @@ SERVER_IP=$(curl -s -4 --connect-timeout 4 https://api.ipify.org || curl -s --co
 if [ -z "$SERVER_IP" ]; then SERVER_IP="127.0.0.1"; fi
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('server_ip', '${SERVER_IP}') ON DUPLICATE KEY UPDATE setting_value = '${SERVER_IP}';" 2>/dev/null || true
 
+# Ensure Tpanel Engine is active before establishing tunnel
+echo "⏳ Verifying Tpanel Engine health on port 3000..."
+for i in $(seq 1 10); do
+    if curl -s -m 2 http://127.0.0.1:3000 >/dev/null 2>&1; then
+        echo "✅ Tpanel Engine active and listening on port 3000."
+        break
+    fi
+    sleep 1
+done
+
 # Install & Configure Cloudflare Quick Tunnel (Zero Domain / Instant HTTPS)
 if ! command -v cloudflared >/dev/null 2>&1; then
     echo "☁️ Installing Cloudflare Quick Tunnel Agent (cloudflared)..."
@@ -351,9 +361,9 @@ After=network.target cpanel-core.service
 [Service]
 Type=simple
 User=root
-ExecStart=${CF_BIN} tunnel --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
+ExecStart=${CF_BIN} tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -381,11 +391,15 @@ fi
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
-# Shorten Master Login URL for Professional Clean Look
+# Shorten Master Login URL for Professional Branded Look
 SHORT_URL=""
 if [ -n "$CF_TUNNEL_URL" ]; then
     LONG_LOGIN_URL="${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
-    SHORT_URL=$(curl -s -m 5 "https://tinyurl.com/api-create.php?url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
+    CUSTOM_ALIAS="tpanel-master-$((RANDOM % 89999 + 10000))"
+    SHORT_URL=$(curl -s -m 5 "https://tinyurl.com/api-create.php?url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")&alias=${CUSTOM_ALIAS}" 2>/dev/null || true)
+    if [[ ! "$SHORT_URL" =~ ^https?:// ]]; then
+        SHORT_URL=$(curl -s -m 5 "https://tinyurl.com/api-create.php?url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
+    fi
     if [[ ! "$SHORT_URL" =~ ^https?:// ]]; then
         SHORT_URL=$(curl -s -m 5 "https://is.gd/create.php?format=simple&url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
     fi
