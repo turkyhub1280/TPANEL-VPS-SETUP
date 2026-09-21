@@ -15,11 +15,12 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Attach to /dev/tty if running via curl pipe so interactive prompts work cleanly
-if [ ! -t 0 ] && [ -e /dev/tty ]; then
-    exec < /dev/tty
+if [ ! -t 0 ]; then
+    if [ -c /dev/tty ]; then
+        exec < /dev/tty 2>/dev/null || true
+    fi
 fi
 
-clear 2>/dev/null || true
 echo ""
 cat << 'EOF'
   ______ _____                 _ 

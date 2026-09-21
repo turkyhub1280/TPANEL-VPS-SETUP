@@ -14,11 +14,12 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Attach to /dev/tty if running via curl pipe
-if [ ! -t 0 ] && [ -e /dev/tty ]; then
-    exec < /dev/tty
+if [ ! -t 0 ]; then
+    if [ -c /dev/tty ]; then
+        exec < /dev/tty 2>/dev/null || true
+    fi
 fi
 
-clear 2>/dev/null || true
 echo ""
 cat << 'EOF'
   ______ _____                 _ 
@@ -52,24 +53,11 @@ done
 
 prompt_password() {
     local prompt="$1"
-    local password=""
-    local char
+    local pass=""
     echo -n "$prompt" >&2
-    while IFS= read -r -s -n 1 char; do
-        if [[ $char == $'\0' || $char == $'\n' ]]; then
-            break
-        elif [[ $char == $'\177' || $char == $'\b' ]]; then
-            if [ ${#password} -gt 0 ]; then
-                password="${password%?}"
-                echo -ne "\b \b" >&2
-            fi
-        else
-            password+="$char"
-            echo -n "*" >&2
-        fi
-    done
+    read -r -s pass 2>/dev/null || read -r pass
     echo "" >&2
-    echo "$password"
+    echo "$pass"
 }
 
 MASTER_PASS="${TPANEL_MASTER_PASS:-}"
