@@ -371,9 +371,9 @@ Wants=cpanel-core.service
 [Service]
 Type=simple
 User=root
-ExecStart=${CF_BIN} tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
+ExecStart=${CF_BIN} tunnel --protocol http2 --edge-ip-version 4 --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
 Restart=always
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -398,38 +398,29 @@ if [ -n "$CF_TUNNEL_URL" ]; then
     mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('cloudflare_tunnel_url', '${CF_TUNNEL_URL}') ON DUPLICATE KEY UPDATE setting_value = '${CF_TUNNEL_URL}';" 2>/dev/null || true
 fi
 
+# Mark system installed to bypass setup redirects
+mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('installed', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true';" 2>/dev/null || true
+
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
-# Pure Bash URL Encoder (zero dependency)
-urlencode() {
-    local string="$1"
-    local strlen=${#string}
-    local encoded=""
-    local pos c o
-    for (( pos=0 ; pos<strlen ; pos++ )); do
-        c=${string:$pos:1}
-        case "$c" in
-            [-_.~a-zA-Z0-9] ) o="${c}" ;;
-            * ) printf -v o '%%%02X' "'$c"
-        esac
-        encoded+="${o}"
-    done
-    echo "${encoded}"
-}
-
-# Shorten Master Login URL for Professional Branded Look
+# Shorten Master Login URL for Professional Branded Look (Ulvis + CleanURI)
 SHORT_URL=""
 if [ -n "$CF_TUNNEL_URL" ]; then
     LONG_LOGIN_URL="${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
-    ENCODED_LOGIN_URL=$(urlencode "$LONG_LOGIN_URL")
-    CUSTOM_ALIAS="tpanel-master-$((RANDOM % 89999 + 10000))"
-    SHORT_URL=$(curl -s -m 6 "https://tinyurl.com/api-create.php?url=${ENCODED_LOGIN_URL}&alias=${CUSTOM_ALIAS}" 2>/dev/null || true)
-    if [[ ! "$SHORT_URL" =~ ^https?://.*tinyurl\.com ]]; then
-        SHORT_URL=$(curl -s -m 6 "https://tinyurl.com/api-create.php?url=${ENCODED_LOGIN_URL}" 2>/dev/null || true)
+    CUSTOM_ALIAS="tpanelmaster$((RANDOM % 89999 + 10000))"
+    ENCODED_LOGIN_URL=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$LONG_LOGIN_URL" 2>/dev/null || echo "$LONG_LOGIN_URL")
+
+    # 1. Ulvis with custom branded alias
+    SHORT_RES=$(curl -s -m 6 "https://ulvis.net/api.php?url=${ENCODED_LOGIN_URL}&custom=${CUSTOM_ALIAS}" 2>/dev/null || true)
+    if [[ "$SHORT_RES" =~ ^https?://.*ulvis\.net ]]; then
+        SHORT_URL="$SHORT_RES"
     fi
-    if [[ ! "$SHORT_URL" =~ ^https?:// ]]; then
-        SHORT_URL=$(curl -s -m 6 "https://is.gd/create.php?format=simple&url=${ENCODED_LOGIN_URL}" 2>/dev/null || true)
+
+    # 2. CleanURI API Fallback
+    if [ -z "$SHORT_URL" ]; then
+        CLEAN_RES=$(curl -s -m 6 -X POST "https://cleanuri.com/api/v1/shorten" -d "url=${LONG_LOGIN_URL}" 2>/dev/null || true)
+        SHORT_URL=$(echo "$CLEAN_RES" | grep -o '"result_url":"[^"]*"' | cut -d'"' -f4 | sed 's/\\//g' || true)
     fi
 fi
 
