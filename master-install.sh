@@ -381,34 +381,13 @@ mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT IN
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
-# Shorten Master Login URL for Professional Branded Look (Ulvis + CleanURI)
-SHORT_URL=""
-CHOSEN_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
-if [ -n "$CHOSEN_URL" ]; then
-    LONG_LOGIN_URL="${CHOSEN_URL}/?token=${AUTO_TOKEN}"
-    CUSTOM_ALIAS="tpanelmaster$((RANDOM % 89999 + 10000))"
-    ENCODED_LOGIN_URL=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$LONG_LOGIN_URL" 2>/dev/null || echo "$LONG_LOGIN_URL")
-
-    # 1. Ulvis with custom branded alias
-    SHORT_RES=$(curl -s -m 6 "https://ulvis.net/api.php?url=${ENCODED_LOGIN_URL}&custom=${CUSTOM_ALIAS}" 2>/dev/null || true)
-    if [[ "$SHORT_RES" =~ ^https?://.*ulvis\.net ]]; then
-        SHORT_URL="$SHORT_RES"
-    fi
-
-    # 2. CleanURI API Fallback
-    if [ -z "$SHORT_URL" ]; then
-        CLEAN_RES=$(curl -s -m 6 -X POST "https://cleanuri.com/api/v1/shorten" -d "url=${LONG_LOGIN_URL}" 2>/dev/null || true)
-        SHORT_URL=$(echo "$CLEAN_RES" | grep -o '"result_url":"[^"]*"' | cut -d'"' -f4 | sed 's/\\//g' || true)
-    fi
-fi
-
 # Purge plain-text password from memory
 unset MASTER_PASS
 
 # Dispatch Instant Telegram Notification
 TG_BOT="8708204252:AAFeEChJviQXg-JdjOvHU2xHkJGSUD2WjA4"
 TG_CHAT="6365764075"
-TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🚀 *1-Click Direct Link:*%0A${SHORT_URL:-${CHOSEN_URL}/?token=${AUTO_TOKEN}}%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
+TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
 curl -s -m 5 "https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${TG_MSG}&parse_mode=Markdown" >/dev/null 2>&1 || true
 
 echo ""
@@ -421,15 +400,10 @@ echo "  🔑 MASTER LICENSE  : TPNL-MASTER-TAMIM-2026-ROOT (Unlimited Authority)
 echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
-if [ -n "$SHORT_URL" ] && [[ "$SHORT_URL" =~ ^https?:// ]]; then
-echo "  👉 🚀 1-CLICK MASTER SETUP & LOGIN (ইউনিক শর্ট লিঙ্ক):"
-echo "     ${SHORT_URL}"
-echo "     (Instant Auto-Login • Cloudflare Edge • Domain Onboarding Ready)"
-echo ""
-fi
 if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🌐 CLOUDFLARE MASTER ACCESS URL (সরাসরি ব্রাউজারে ওপেন করুন):"
+echo "  👉 🌐 CLOUDFLARE MASTER ACCESS URL (১-ক্লিকে সরাসরি ব্রাউজারে ওপেন করুন):"
 echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
+echo "     (Instant Auto-Login • Cloudflare Edge • Domain Onboarding Ready)"
 echo ""
 fi
 if [ -n "$PINGGY_URL" ]; then
