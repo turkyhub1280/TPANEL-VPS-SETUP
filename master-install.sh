@@ -13,12 +13,31 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Attach to /dev/tty if running via curl pipe
-if [ ! -t 0 ]; then
-    if [ -c /dev/tty ]; then
-        exec < /dev/tty 2>/dev/null || true
+# TTY-safe input helpers
+read_input() {
+    local prompt_text="$1"
+    local var_name="$2"
+    local val=""
+    if [ ! -t 0 ] && [ -c /dev/tty ]; then
+        read -r -p "$prompt_text" val < /dev/tty 2>/dev/null || read -r -p "$prompt_text" val
+    else
+        read -r -p "$prompt_text" val
     fi
-fi
+    eval "$var_name=\"\$val\""
+}
+
+prompt_password() {
+    local prompt="$1"
+    local pass=""
+    echo -n "$prompt" >&2
+    if [ ! -t 0 ] && [ -c /dev/tty ]; then
+        read -r -s pass < /dev/tty 2>/dev/null || read -r pass < /dev/tty 2>/dev/null || read -r -s pass 2>/dev/null || read -r pass
+    else
+        read -r -s pass 2>/dev/null || read -r pass
+    fi
+    echo "" >&2
+    echo "$pass"
+}
 
 echo ""
 cat << 'EOF'
@@ -44,21 +63,12 @@ echo ""
 # Prompt Master Admin Credentials
 MASTER_EMAIL="${TPANEL_MASTER_EMAIL:-}"
 while [ -z "$MASTER_EMAIL" ]; do
-    read -r -p "👤 Master Administrator Email [tamimhasan1281@gmail.com]: " MASTER_EMAIL
+    read_input "👤 Master Administrator Email [tamimhasan1281@gmail.com]: " MASTER_EMAIL
     MASTER_EMAIL=$(echo "$MASTER_EMAIL" | tr -d ' ')
     if [ -z "$MASTER_EMAIL" ]; then
         MASTER_EMAIL="tamimhasan1281@gmail.com"
     fi
 done
-
-prompt_password() {
-    local prompt="$1"
-    local pass=""
-    echo -n "$prompt" >&2
-    read -r -s pass 2>/dev/null || read -r pass
-    echo "" >&2
-    echo "$pass"
-}
 
 MASTER_PASS="${TPANEL_MASTER_PASS:-}"
 if [ -z "$MASTER_PASS" ]; then
@@ -168,7 +178,7 @@ fi
 
 if ! git clone --depth 1 "$CLONE_URL" "${TEMP_DIR}" 2>/dev/null; then
     echo "🔒 Private repository authentication required."
-    read -r -p "🔑 Enter your GitHub Personal Access Token: " GITHUB_TOKEN
+    read_input "🔑 Enter your GitHub Personal Access Token: " GITHUB_TOKEN
     GITHUB_TOKEN=$(echo "$GITHUB_TOKEN" | tr -d ' ')
     git clone --depth 1 "https://${GITHUB_TOKEN}@github.com/turkyhub1280/TPANEL-VPS.git" "${TEMP_DIR}"
 fi

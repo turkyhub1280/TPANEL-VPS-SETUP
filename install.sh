@@ -14,12 +14,31 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Attach to /dev/tty if running via curl pipe so interactive prompts work cleanly
-if [ ! -t 0 ]; then
-    if [ -c /dev/tty ]; then
-        exec < /dev/tty 2>/dev/null || true
+# TTY-safe input helpers
+read_input() {
+    local prompt_text="$1"
+    local var_name="$2"
+    local val=""
+    if [ ! -t 0 ] && [ -c /dev/tty ]; then
+        read -r -p "$prompt_text" val < /dev/tty 2>/dev/null || read -r -p "$prompt_text" val
+    else
+        read -r -p "$prompt_text" val
     fi
-fi
+    eval "$var_name=\"\$val\""
+}
+
+prompt_password() {
+    local prompt="$1"
+    local pass=""
+    echo -n "$prompt" >&2
+    if [ ! -t 0 ] && [ -c /dev/tty ]; then
+        read -r -s pass < /dev/tty 2>/dev/null || read -r pass < /dev/tty 2>/dev/null || read -r -s pass 2>/dev/null || read -r pass
+    else
+        read -r -s pass 2>/dev/null || read -r pass
+    fi
+    echo "" >&2
+    echo "$pass"
+}
 
 echo ""
 cat << 'EOF'
@@ -63,7 +82,7 @@ while [ -z "$LICENSE_KEY" ]; do
     echo "🔐 STEP 1/2: LICENSE KEY VERIFICATION (লাইসেন্স কি যাচাইকরণ)"
     echo "--------------------------------------------------------------------------"
     echo "  Tpanel requires an authentic commercial license key to activate."
-    read -r -p "🔑 Enter your Tpanel License Key: " LICENSE_KEY
+    read_input "🔑 Enter your Tpanel License Key: " LICENSE_KEY
     LICENSE_KEY=$(echo "$LICENSE_KEY" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
     if [ -z "$LICENSE_KEY" ]; then
         echo "❌ License key cannot be blank. Please enter a valid key."
@@ -75,7 +94,7 @@ TPANEL_HUB="${TPANEL_HUB:-}"
 while [ -z "$TPANEL_HUB" ]; do
     echo ""
     echo "🌐 MASTER LICENSING AUTHORITY (মাস্টার সার্ভার লিঙ্ক বা আইপি):"
-    read -r -p "   Enter Master Server URL or IP (e.g. https://xxx.trycloudflare.com or 1.2.3.4): " TPANEL_HUB
+    read_input "   Enter Master Server URL or IP (e.g. https://xxx.trycloudflare.com or 1.2.3.4): " TPANEL_HUB
     TPANEL_HUB=$(echo "$TPANEL_HUB" | tr -d ' ' | sed 's|/$||')
     if [[ ! "$TPANEL_HUB" =~ ^https?:// ]] && [ -n "$TPANEL_HUB" ]; then
         TPANEL_HUB="http://${TPANEL_HUB}"
@@ -135,34 +154,12 @@ echo ""
 
 ADMIN_EMAIL="${TPANEL_ADMIN_EMAIL:-}"
 while [ -z "$ADMIN_EMAIL" ]; do
-    read -r -p "📧 Administrator Email: " ADMIN_EMAIL
+    read_input "📧 Administrator Email: " ADMIN_EMAIL
     ADMIN_EMAIL=$(echo "$ADMIN_EMAIL" | tr -d ' ')
     if [ -z "$ADMIN_EMAIL" ]; then
         echo "❌ Email cannot be blank."
     fi
 done
-
-prompt_password() {
-    local prompt="$1"
-    local password=""
-    local char
-    echo -n "$prompt" >&2
-    while IFS= read -r -s -n 1 char; do
-        if [[ $char == $'\0' || $char == $'\n' ]]; then
-            break
-        elif [[ $char == $'\177' || $char == $'\b' ]]; then
-            if [ ${#password} -gt 0 ]; then
-                password="${password%?}"
-                echo -ne "\b \b" >&2
-            fi
-        else
-            password+="$char"
-            echo -n "*" >&2
-        fi
-    done
-    echo "" >&2
-    echo "$password"
-}
 
 ADMIN_PASS="${TPANEL_ADMIN_PASS:-}"
 if [ -z "$ADMIN_PASS" ]; then
