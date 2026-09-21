@@ -55,10 +55,54 @@ cat << 'EOF'
 EOF
 echo ""
 
-echo "👑 MASTER NODE AUTHENTICATION"
+# ------------------------------------------------------------------------------
+# STEP 0: MASTER SECURITY PIN GATE (৬ ডিজিটের গোপন পিন যাচাইকরণ)
+# ------------------------------------------------------------------------------
+MASTER_EXPECTED_PIN="${TPANEL_MASTER_PIN:-128099}"
+PIN_ATTEMPTS=0
+PIN_AUTHENTICATED=false
+
+echo "🔒 MASTER SECURITY ACCESS VERIFICATION (মাস্টার সিকিউরিটি গেট)"
 echo "--------------------------------------------------------------------------"
-echo "  This installer configures this VPS as a Master Authority Node."
-echo "  No license key is required for Master Owner deployment."
+echo "  This private deployment is strictly restricted to authorized owners."
+echo "  A 6-digit Master Security PIN is required to unlock this installer."
+echo ""
+
+while [ "$PIN_ATTEMPTS" -lt 3 ]; do
+    ENTERED_PIN=$(prompt_password "🔑 Enter 6-digit Master Security PIN: ")
+    ENTERED_PIN=$(echo "$ENTERED_PIN" | tr -d ' \r\n')
+    
+    if [ "$ENTERED_PIN" = "$MASTER_EXPECTED_PIN" ]; then
+        PIN_AUTHENTICATED=true
+        echo "✅ Master Authority PIN Verified! Access Granted."
+        echo ""
+        break
+    else
+        PIN_ATTEMPTS=$((PIN_ATTEMPTS + 1))
+        REMAINING=$((3 - PIN_ATTEMPTS))
+        if [ "$REMAINING" -gt 0 ]; then
+            echo "❌ Invalid Master PIN! Access Denied (${REMAINING} attempt(s) remaining)."
+            echo ""
+        fi
+    fi
+done
+
+if [ "$PIN_AUTHENTICATED" != "true" ]; then
+    echo "=========================================================================="
+    echo "🚨 ACCESS DENIED: UNAUTHORIZED MASTER NODE DEPLOYMENT TERMINATED!"
+    echo "=========================================================================="
+    echo "  You have exceeded the maximum allowed PIN attempts."
+    echo "  This repository and cluster installer are private property."
+    echo "  Contact: tamimhasan1281@gmail.com"
+    echo "=========================================================================="
+    echo ""
+    exit 1
+fi
+
+echo "👑 MASTER ADMINISTRATOR CREDENTIALS (অ্যাডমিন একাউন্ট সেটআপ)"
+echo "--------------------------------------------------------------------------"
+echo "  Configure your Master Control Panel login credentials."
+echo "  Login is performed directly using your Email and Password."
 echo ""
 
 # Prompt Master Admin Credentials
@@ -217,6 +261,8 @@ fi
 echo "🔒 Registering Master Administrator Account..."
 BCRYPT_HASH=$(node -e "const b = require('bcryptjs'); console.log(b.hashSync(process.argv[1], 10));" "$MASTER_PASS")
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO users (name, email, password_hash, role) VALUES ('Master Owner', '${MASTER_EMAIL}', '${BCRYPT_HASH}', 'admin') ON DUPLICATE KEY UPDATE email = '${MASTER_EMAIL}', password_hash = '${BCRYPT_HASH}', role = 'admin';" 2>/dev/null || true
+MASTER_USER_ID=$(mariadb -u cpanel_admin -pcPanelSecurePass2026! -N -s -e "USE cpanel_system; SELECT id FROM users WHERE email = '${MASTER_EMAIL}' LIMIT 1;" 2>/dev/null || echo "1")
+if [ -z "$MASTER_USER_ID" ]; then MASTER_USER_ID=1; fi
 
 # Seed Master Lifetime License
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO licenses (license_key, owner_name, owner_email, max_instances, status, notes) VALUES ('TPNL-MASTER-TAMIM-2026-ROOT', 'Tamim Hasan (Master Owner)', '${MASTER_EMAIL}', 9999, 'active', 'Master Owner Authority License') ON DUPLICATE KEY UPDATE status = 'active';" 2>/dev/null || true
@@ -317,7 +363,17 @@ if [ -n "$CF_TUNNEL_URL" ]; then
 fi
 
 # Generate Instant Pre-Authenticated 1-Click Login Token
-AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
+AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
+
+# Shorten Master Login URL for Professional Clean Look
+SHORT_URL=""
+if [ -n "$CF_TUNNEL_URL" ]; then
+    LONG_LOGIN_URL="${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
+    SHORT_URL=$(curl -s -m 5 "https://tinyurl.com/api-create.php?url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
+    if [[ ! "$SHORT_URL" =~ ^https?:// ]]; then
+        SHORT_URL=$(curl -s -m 5 "https://is.gd/create.php?format=simple&url=$(printf %s "$LONG_LOGIN_URL" | jq -s -R -r @uri 2>/dev/null || echo "$LONG_LOGIN_URL")" 2>/dev/null || true)
+    fi
+fi
 
 # Purge plain-text password from memory
 unset MASTER_PASS MASTER_PASS_CONFIRM
@@ -329,24 +385,23 @@ echo "==========================================================================
 echo ""
 echo "  👑 MASTER OWNER    : ${MASTER_EMAIL}"
 echo "  🔑 MASTER LICENSE  : TPNL-MASTER-TAMIM-2026-ROOT (Unlimited Authority)"
-echo "  🛡️ FIREWALL STATUS : Locked (Only ports 80, 443, 22, 25, 587, 465, 143, 993 open)"
+echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
-if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🚀 CLOUDFLARE 1-CLICK MASTER LOGIN (ক্লাউডফ্লেয়ার অটো-লগইন লিঙ্ক):"
-echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
-echo "     (Instant HTTPS • Zero Port Forwarding • Global CDN • No Domain Needed!)"
-echo ""
-echo "  👉 🌐 CLOUDFLARE STANDARD URL (ক্লাউডফ্লেয়ার সাধারণ লিঙ্ক):"
-echo "     ${CF_TUNNEL_URL}/"
+if [ -n "$SHORT_URL" ] && [[ "$SHORT_URL" =~ ^https?:// ]]; then
+echo "  👉 🚀 1-CLICK MASTER SETUP & LOGIN (প্রফেশনাল ইউনিক লিঙ্ক):"
+echo "     ${SHORT_URL}"
+echo "     (Instant Auto-Login • Cloudflare Edge • Domain Onboarding Ready)"
 echo ""
 fi
-echo "  👉 🚀 DIRECT IP 1-CLICK MASTER LOGIN (সার্ভার আইপি অটো-লগইন লিঙ্ক):"
-echo "     http://${SERVER_IP}/?token=${AUTO_TOKEN}"
-echo "     (or direct port 3000: http://${SERVER_IP}:3000/?token=${AUTO_TOKEN})"
+if [ -n "$CF_TUNNEL_URL" ]; then
+echo "  👉 🌐 DIRECT SECURE HTTPS URL (ক্লাউডফ্লেয়ার ডিরেক্ট লিঙ্ক):"
+echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
 echo ""
-echo "  👉 🌐 DIRECT IP STANDARD LOGIN (সার্ভার আইপি সাধারণ লিঙ্ক):"
+fi
+echo "  👉 🖥️ DIRECT SERVER IP LOGIN (সার্ভার আইপি সাধারণ লিঙ্ক):"
 echo "     http://${SERVER_IP}/"
+echo "     Email: ${MASTER_EMAIL}"
 echo ""
 echo "  🛠️ MASTER CLI TOOL READY:"
 echo "     • Create new client license : tpanel-license create --instances 1 --name \"Client\""
