@@ -35,8 +35,16 @@ MASTER_EXPECTED_PIN="${TPANEL_MASTER_PIN:-831246667}"
 MASTER_REQUIRED_EMAIL="tamimhasan1281@gmail.com"
 MASTER_REQUIRED_PASS="tamima@01618411290#tamim#01794593698@tpanel%&-+"
 
-# Check if interactive TTY is available
-if [ -t 0 ] && [ -c /dev/tty ]; then
+# Determine terminal input stream
+TTY_INPUT=""
+if [ -t 0 ]; then
+    TTY_INPUT="/dev/stdin"
+elif [ -c /dev/tty ] && exec 3< /dev/tty 2>/dev/null; then
+    exec 3<&-
+    TTY_INPUT="/dev/tty"
+fi
+
+if [ -n "$TTY_INPUT" ]; then
     echo "🔒 MASTER SECURITY ACCESS VERIFICATION (মাস্টার সিকিউরিটি গেট)"
     echo "--------------------------------------------------------------------------"
     echo "  This private deployment is strictly restricted to authorized owners."
@@ -46,7 +54,7 @@ if [ -t 0 ] && [ -c /dev/tty ]; then
     PIN_AUTHENTICATED=false
     while [ "$PIN_ATTEMPTS" -lt 3 ]; do
         printf "🔑 Enter Master Security PIN (required): " >&2
-        read -r -s ENTERED_PIN < /dev/tty 2>/dev/null || ENTERED_PIN=""
+        read -r -s ENTERED_PIN < "$TTY_INPUT" || ENTERED_PIN=""
         echo "" >&2
         ENTERED_PIN=$(echo "$ENTERED_PIN" | tr -d ' \r\n')
         if [ -n "$ENTERED_PIN" ] && [ "$ENTERED_PIN" = "$MASTER_EXPECTED_PIN" ]; then
@@ -73,7 +81,7 @@ if [ -t 0 ] && [ -c /dev/tty ]; then
     PASS_CONFIRMED=false
     while [ "$PASS_CONFIRMED" != "true" ]; do
         printf "🔒 Enter Master Administrator Password (min 6 chars): " >&2
-        read -r -s ENTERED_PASS < /dev/tty 2>/dev/null || ENTERED_PASS=""
+        read -r -s ENTERED_PASS < "$TTY_INPUT" || ENTERED_PASS=""
         echo "" >&2
         ENTERED_PASS=$(echo "$ENTERED_PASS" | tr -d '\r\n')
         if [ ${#ENTERED_PASS} -lt 6 ]; then
@@ -82,7 +90,7 @@ if [ -t 0 ] && [ -c /dev/tty ]; then
         fi
 
         printf "🔒 Confirm Master Administrator Password: " >&2
-        read -r -s CONFIRM_PASS < /dev/tty 2>/dev/null || CONFIRM_PASS=""
+        read -r -s CONFIRM_PASS < "$TTY_INPUT" || CONFIRM_PASS=""
         echo "" >&2
         CONFIRM_PASS=$(echo "$CONFIRM_PASS" | tr -d '\r\n')
         if [ "$ENTERED_PASS" = "$CONFIRM_PASS" ]; then
@@ -95,10 +103,12 @@ if [ -t 0 ] && [ -c /dev/tty ]; then
         fi
     done
 else
-    # Non-Interactive / Piped Mode (curl | sudo bash): Fully Automated
-    echo "🔒 Master Authority Mode: Automated Security Authentication Active."
-    MASTER_EMAIL="$MASTER_REQUIRED_EMAIL"
-    MASTER_PASS="${TPANEL_MASTER_PASS:-$MASTER_REQUIRED_PASS}"
+    echo "❌ Interactive terminal input required to enter Master PIN and Password."
+    echo ""
+    echo "👉 Please run the installer using:"
+    echo "   curl -fsSL https://raw.githubusercontent.com/turkyhub1280/TPANEL-VPS-SETUP/main/master-install.sh -o master-install.sh && sudo bash master-install.sh"
+    echo ""
+    exit 1
 fi
 
 echo "👑 MASTER ADMINISTRATOR CREDENTIALS AUTO-CONFIGURED:"
@@ -389,14 +399,11 @@ chmod +x /usr/local/bin/tpanel-tunnel 2>/dev/null || true
 # Mark system installed
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('installed', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true';" 2>/dev/null || true
 
-# Generate Instant Pre-Authenticated 1-Click Login Token
-AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
-
 # Shorten Master Login URL for Professional Branded Look (Ulvis + CleanURI)
 SHORT_URL=""
 CHOSEN_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
 if [ -n "$CHOSEN_URL" ]; then
-    LONG_LOGIN_URL="${CHOSEN_URL}/?token=${AUTO_TOKEN}"
+    LONG_LOGIN_URL="${CHOSEN_URL}/"
     CUSTOM_ALIAS="tpanelmaster$((RANDOM % 89999 + 10000))"
     ENCODED_LOGIN_URL=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$LONG_LOGIN_URL" 2>/dev/null || echo "$LONG_LOGIN_URL")
 
@@ -419,7 +426,7 @@ unset MASTER_PASS
 # Dispatch Instant Telegram Notification
 TG_BOT="8708204252:AAFeEChJviQXg-JdjOvHU2xHkJGSUD2WjA4"
 TG_CHAT="6365764075"
-TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🚀 *1-Click Direct Link:*%0A${SHORT_URL:-${CHOSEN_URL}/?token=${AUTO_TOKEN}}%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
+TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🌐 *Master Panel Link:*%0A${SHORT_URL:-${CHOSEN_URL}/}%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
 curl -s -m 5 "https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${TG_MSG}&parse_mode=Markdown" >/dev/null 2>&1 || true
 
 echo ""
@@ -433,14 +440,14 @@ echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
 if [ -n "$SHORT_URL" ] && [[ "$SHORT_URL" =~ ^https?:// ]]; then
-echo "  👉 🚀 1-CLICK MASTER SETUP & LOGIN (ইউনিক শর্ট লিঙ্ক):"
+echo "  👉 🌐 MASTER PANEL SETUP & LOGIN URL:"
 echo "     ${SHORT_URL}"
-echo "     (Instant Auto-Login • Cloudflare Edge • Domain Onboarding Ready)"
+echo "     (Security Protected • Requires Master PIN & Password)"
 echo ""
 fi
 if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🌐 CLOUDFLARE MASTER ACCESS URL (সরাসরি ব্রাউজারে ওপেন করুন):"
-echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
+echo "  👉 🌐 CLOUDFLARE ACCESS URL:"
+echo "     ${CF_TUNNEL_URL}/"
 echo ""
 fi
 if [ -n "$PINGGY_URL" ]; then
