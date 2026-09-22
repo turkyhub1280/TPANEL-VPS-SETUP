@@ -431,7 +431,7 @@ CF_TUNNEL_URL=""
 echo "⏳ Waiting for Cloudflare Quick Tunnel endpoint (up to 15s)..."
 for i in $(seq 1 15); do
     sleep 1
-    CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | head -n 1 || true)
+    CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
     if [ -n "$CF_TUNNEL_URL" ]; then
         break
     fi

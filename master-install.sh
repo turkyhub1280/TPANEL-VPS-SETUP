@@ -316,17 +316,15 @@ for i in $(seq 1 10); do
 done
 
 # ------------------------------------------------------------------------------
-# HIGH-AVAILABILITY REMOTE TUNNELS (CLOUDFLARE + PINGGY NO-FLAP ENGINES)
+# HIGH-AVAILABILITY REMOTE TUNNELS (CLOUDFLARE + PINGGY RESILIENT ENGINES)
 # ------------------------------------------------------------------------------
 echo "🌐 Starting High-Availability Remote Access Tunnel Services..."
 
-# 1. Clean up old tunnel processes
+# 1. Clean up old tunnel processes & services
 pkill -9 -f "cloudflared" 2>/dev/null || true
 pkill -9 -f "a.pinggy.io" 2>/dev/null || true
 systemctl stop tpanel-tunnel.service 2>/dev/null || true
-systemctl disable tpanel-tunnel.service 2>/dev/null || true
 systemctl stop tpanel-pinggy.service 2>/dev/null || true
-systemctl disable tpanel-pinggy.service 2>/dev/null || true
 mkdir -p /var/log /etc/tpanel /opt/cpanel-core
 rm -f /var/log/tpanel-tunnel.log /var/log/tpanel-pinggy.log
 
@@ -339,21 +337,63 @@ if ! command -v cloudflared >/dev/null 2>&1; then
     chmod +x /usr/local/bin/cloudflared 2>/dev/null || true
 fi
 
-# 3. Launch Cloudflare Tunnel in background (No-Flap Nohup)
+# 3. Launch Cloudflare Tunnel daemon via Systemd (with background fallback)
 CF_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
 if [ -x "$CF_BIN" ]; then
-    echo "☁️ Starting Cloudflare Quick Tunnel daemon..."
-    nohup "${CF_BIN}" tunnel --no-autoupdate --url http://127.0.0.1:3000 > /var/log/tpanel-tunnel.log 2>&1 &
+    echo "☁️ Starting Cloudflare Quick Tunnel service..."
+    cat << EOF > /etc/systemd/system/tpanel-tunnel.service
+[Unit]
+Description=Tpanel Cloudflare Tunnel Service
+After=network.target cpanel-core.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=${CF_BIN} tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable tpanel-tunnel.service 2>/dev/null || true
+    systemctl restart tpanel-tunnel.service 2>/dev/null || true
+    sleep 2
+    if ! pgrep -f "cloudflared" >/dev/null 2>&1; then
+        nohup "${CF_BIN}" tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log >/dev/null 2>&1 &
+    fi
 fi
 
-# 4. Launch Pinggy SSH Tunnel in background (Port 443 TCP Fail-Safe)
+# 4. Launch Pinggy SSH Tunnel daemon via Systemd (with background fallback)
 SSH_BIN=$(command -v ssh || which ssh || echo "/usr/bin/ssh")
 if [ -x "$SSH_BIN" ]; then
-    echo "⚡ Starting Pinggy Secure Tunnel daemon..."
-    nohup "${SSH_BIN}" -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -R0:localhost:3000 a.pinggy.io > /var/log/tpanel-pinggy.log 2>&1 &
+    echo "⚡ Starting Pinggy Secure Tunnel service..."
+    cat << EOF > /etc/systemd/system/tpanel-pinggy.service
+[Unit]
+Description=Tpanel Pinggy Tunnel Service
+After=network.target cpanel-core.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/bin/sh -c 'exec ${SSH_BIN} -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -R0:localhost:3000 a.pinggy.io > /var/log/tpanel-pinggy.log 2>&1'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable tpanel-pinggy.service 2>/dev/null || true
+    systemctl restart tpanel-pinggy.service 2>/dev/null || true
+    sleep 2
+    if ! pgrep -f "a.pinggy.io" >/dev/null 2>&1; then
+        nohup "${SSH_BIN}" -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -R0:localhost:3000 a.pinggy.io > /var/log/tpanel-pinggy.log 2>&1 &
+    fi
 fi
 
-# 5. Wait and extract endpoints (up to 25s)
+# 5. Extract endpoints & verify reachability
 echo "⏳ Connecting remote tunnels and generating instant HTTPS access URLs..."
 CF_TUNNEL_URL=""
 PINGGY_URL=""
@@ -361,10 +401,10 @@ PINGGY_URL=""
 for i in $(seq 1 25); do
     sleep 1
     if [ -z "$CF_TUNNEL_URL" ] && [ -f /var/log/tpanel-tunnel.log ]; then
-        CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
+        CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
     fi
     if [ -z "$PINGGY_URL" ] && [ -f /var/log/tpanel-pinggy.log ]; then
-        PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+        PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
     fi
     if [ -n "$CF_TUNNEL_URL" ] && [ -n "$PINGGY_URL" ]; then
         break
@@ -373,6 +413,17 @@ for i in $(seq 1 25); do
         break
     fi
 done
+
+# Verify edge tunnel connectivity
+if [ -n "$CF_TUNNEL_URL" ]; then
+    for k in $(seq 1 8); do
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 2 "${CF_TUNNEL_URL}" 2>/dev/null || true)
+        if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            break
+        fi
+        sleep 1
+    done
+fi
 
 # Save active tunnel URLs to file and database
 PRIMARY_REMOTE_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
@@ -384,13 +435,13 @@ fi
 # Create tpanel-tunnel CLI command for instant URL retrieval
 cat << 'EOF' > /usr/local/bin/tpanel-tunnel
 #!/usr/bin/env bash
-CF_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
-PG_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+CF_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
+PG_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
 echo "=========================================================================="
 echo "  🌐 TPANEL ACTIVE REMOTE TUNNELS"
 echo "=========================================================================="
-if [ -n "$CF_U" ]; then echo "  ☁️ Cloudflare Tunnel : $CF_U"; fi
-if [ -n "$PG_U" ]; then echo "  ⚡ Pinggy Tunnel     : $PG_U"; fi
+if [ -n "$CF_U" ]; then echo "  ☁️ Cloudflare Tunnel : ${CF_U}/"; fi
+if [ -n "$PG_U" ]; then echo "  ⚡ Pinggy Tunnel     : ${PG_U}/"; fi
 if [ -z "$CF_U" ] && [ -z "$PG_U" ]; then echo "  ⚠️ No active tunnel detected in logs."; fi
 echo "=========================================================================="
 EOF
@@ -399,34 +450,13 @@ chmod +x /usr/local/bin/tpanel-tunnel 2>/dev/null || true
 # Mark system installed
 mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT INTO system_settings (setting_key, setting_value) VALUES ('installed', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true';" 2>/dev/null || true
 
-# Shorten Master Login URL for Professional Branded Look (Ulvis + CleanURI)
-SHORT_URL=""
-CHOSEN_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
-if [ -n "$CHOSEN_URL" ]; then
-    LONG_LOGIN_URL="${CHOSEN_URL}/"
-    CUSTOM_ALIAS="tpanelmaster$((RANDOM % 89999 + 10000))"
-    ENCODED_LOGIN_URL=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$LONG_LOGIN_URL" 2>/dev/null || echo "$LONG_LOGIN_URL")
-
-    # 1. Ulvis with custom branded alias
-    SHORT_RES=$(curl -s -m 6 "https://ulvis.net/api.php?url=${ENCODED_LOGIN_URL}&custom=${CUSTOM_ALIAS}" 2>/dev/null || true)
-    if [[ "$SHORT_RES" =~ ^https?://.*ulvis\.net ]]; then
-        SHORT_URL="$SHORT_RES"
-    fi
-
-    # 2. CleanURI API Fallback
-    if [ -z "$SHORT_URL" ]; then
-        CLEAN_RES=$(curl -s -m 6 -X POST "https://cleanuri.com/api/v1/shorten" -d "url=${LONG_LOGIN_URL}" 2>/dev/null || true)
-        SHORT_URL=$(echo "$CLEAN_RES" | grep -o '"result_url":"[^"]*"' | cut -d'"' -f4 | sed 's/\\//g' || true)
-    fi
-fi
-
 # Purge plain-text password from memory
 unset MASTER_PASS
 
 # Dispatch Instant Telegram Notification
 TG_BOT="8708204252:AAFeEChJviQXg-JdjOvHU2xHkJGSUD2WjA4"
 TG_CHAT="6365764075"
-TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🌐 *Master Panel Link:*%0A${SHORT_URL:-${CHOSEN_URL}/}%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
+TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
 curl -s -m 5 "https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${TG_MSG}&parse_mode=Markdown" >/dev/null 2>&1 || true
 
 echo ""
@@ -439,20 +469,16 @@ echo "  🔑 MASTER LICENSE  : TPNL-MASTER-TAMIM-2026-ROOT (Unlimited Authority)
 echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
-if [ -n "$SHORT_URL" ] && [[ "$SHORT_URL" =~ ^https?:// ]]; then
-echo "  👉 🌐 MASTER PANEL SETUP & LOGIN URL:"
-echo "     ${SHORT_URL}"
-echo "     (Security Protected • Requires Master PIN & Password)"
-echo ""
-fi
 if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🌐 CLOUDFLARE ACCESS URL:"
+echo "  👉 🌐 CLOUDFLARE SECURE ACCESS URL (RECOMMENDED):"
 echo "     ${CF_TUNNEL_URL}/"
+echo "     (Global CDN • Free SSL • Requires Master PIN & Password)"
 echo ""
 fi
 if [ -n "$PINGGY_URL" ]; then
-echo "  👉 ⚡ PINGGY MASTER ACCESS URL (অল্টারনেটিভ হাই-স্পিড লিঙ্ক):"
-echo "     ${PINGGY_URL}/?token=${AUTO_TOKEN}"
+echo "  👉 ⚡ PINGGY HIGH-SPEED BACKUP URL:"
+echo "     ${PINGGY_URL}/"
+echo "     (High-Speed Direct Tunnel • Requires Master PIN & Password)"
 echo ""
 fi
 echo "  👉 🖥️ DIRECT SERVER IP LOGIN:"
