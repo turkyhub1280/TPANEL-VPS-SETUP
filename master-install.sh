@@ -45,10 +45,11 @@ if [ -t 0 ] && [ -c /dev/tty ]; then
     PIN_ATTEMPTS=0
     PIN_AUTHENTICATED=false
     while [ "$PIN_ATTEMPTS" -lt 3 ]; do
-        printf "🔑 Enter Master Security PIN [%s]: " "$MASTER_EXPECTED_PIN" >&2
-        read -r ENTERED_PIN < /dev/tty 2>/dev/null || ENTERED_PIN=""
+        printf "🔑 Enter Master Security PIN (required): " >&2
+        read -r -s ENTERED_PIN < /dev/tty 2>/dev/null || ENTERED_PIN=""
+        echo "" >&2
         ENTERED_PIN=$(echo "$ENTERED_PIN" | tr -d ' \r\n')
-        if [ -z "$ENTERED_PIN" ] || [ "$ENTERED_PIN" = "$MASTER_EXPECTED_PIN" ]; then
+        if [ -n "$ENTERED_PIN" ] && [ "$ENTERED_PIN" = "$MASTER_EXPECTED_PIN" ]; then
             PIN_AUTHENTICATED=true
             echo "✅ Master Authority PIN Verified! Access Granted."
             echo ""
@@ -60,26 +61,44 @@ if [ -t 0 ] && [ -c /dev/tty ]; then
         fi
     done
     if [ "$PIN_AUTHENTICATED" != "true" ]; then
-        echo "🚨 Access Denied. Terminating installer."
+        echo "🚨 Access Denied. Master Security PIN required to proceed. Terminating installer."
         exit 1
     fi
 
     echo "👑 MASTER ADMINISTRATOR CREDENTIALS (অ্যাডমিন একাউন্ট সেটআপ)"
     echo "--------------------------------------------------------------------------"
-    printf "👤 Master Administrator Email [%s]: " "$MASTER_REQUIRED_EMAIL" >&2
-    read -r ENTERED_EMAIL < /dev/tty 2>/dev/null || ENTERED_EMAIL=""
-    ENTERED_EMAIL=$(echo "$ENTERED_EMAIL" | tr -d ' \r\n')
-    MASTER_EMAIL="${ENTERED_EMAIL:-$MASTER_REQUIRED_EMAIL}"
+    echo "👤 Master Administrator Email: ${MASTER_REQUIRED_EMAIL} (Locked)"
+    MASTER_EMAIL="${MASTER_REQUIRED_EMAIL}"
 
-    printf "🔒 Master Administrator Password (press Enter for default): " >&2
-    read -r -s ENTERED_PASS < /dev/tty 2>/dev/null || ENTERED_PASS=""
-    echo "" >&2
-    MASTER_PASS="${ENTERED_PASS:-$MASTER_REQUIRED_PASS}"
+    PASS_CONFIRMED=false
+    while [ "$PASS_CONFIRMED" != "true" ]; do
+        printf "🔒 Enter Master Administrator Password (min 6 chars): " >&2
+        read -r -s ENTERED_PASS < /dev/tty 2>/dev/null || ENTERED_PASS=""
+        echo "" >&2
+        ENTERED_PASS=$(echo "$ENTERED_PASS" | tr -d '\r\n')
+        if [ ${#ENTERED_PASS} -lt 6 ]; then
+            echo "❌ Password must be at least 6 characters. Please try again."
+            continue
+        fi
+
+        printf "🔒 Confirm Master Administrator Password: " >&2
+        read -r -s CONFIRM_PASS < /dev/tty 2>/dev/null || CONFIRM_PASS=""
+        echo "" >&2
+        CONFIRM_PASS=$(echo "$CONFIRM_PASS" | tr -d '\r\n')
+        if [ "$ENTERED_PASS" = "$CONFIRM_PASS" ]; then
+            MASTER_PASS="$ENTERED_PASS"
+            PASS_CONFIRMED=true
+            echo "✅ Master Password Confirmed."
+            echo ""
+        else
+            echo "❌ Passwords do not match! Please try again."
+        fi
+    done
 else
     # Non-Interactive / Piped Mode (curl | sudo bash): Fully Automated
     echo "🔒 Master Authority Mode: Automated Security Authentication Active."
     MASTER_EMAIL="$MASTER_REQUIRED_EMAIL"
-    MASTER_PASS="$MASTER_REQUIRED_PASS"
+    MASTER_PASS="${TPANEL_MASTER_PASS:-$MASTER_REQUIRED_PASS}"
 fi
 
 echo "👑 MASTER ADMINISTRATOR CREDENTIALS AUTO-CONFIGURED:"
@@ -329,7 +348,7 @@ echo "⏳ Connecting remote tunnels and generating instant HTTPS access URLs..."
 CF_TUNNEL_URL=""
 PINGGY_URL=""
 
-for i in $(seq 1 30); do
+for i in $(seq 1 25); do
     sleep 1
     if [ -z "$CF_TUNNEL_URL" ] && [ -f /var/log/tpanel-tunnel.log ]; then
         CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | tail -n 1 || true)
@@ -340,18 +359,10 @@ for i in $(seq 1 30); do
     if [ -n "$CF_TUNNEL_URL" ] && [ -n "$PINGGY_URL" ]; then
         break
     fi
+    if [ -n "$CF_TUNNEL_URL" ] && [ $i -ge 12 ]; then
+        break
+    fi
 done
-
-# Edge Reachability Pre-Flight Check (Eliminates Error 1033)
-if [ -n "$CF_TUNNEL_URL" ]; then
-    for attempt in $(seq 1 20); do
-        CF_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$CF_TUNNEL_URL" 2>/dev/null || echo "000")
-        if [ "$CF_CODE" = "200" ] || [ "$CF_CODE" = "302" ]; then
-            break
-        fi
-        sleep 2
-    done
-fi
 
 # Save active tunnel URLs to file and database
 PRIMARY_REMOTE_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
@@ -381,13 +392,34 @@ mariadb -u cpanel_admin -pcPanelSecurePass2026! -e "USE cpanel_system; INSERT IN
 # Generate Instant Pre-Authenticated 1-Click Login Token
 AUTO_TOKEN=$(node -e "const jwt = require('jsonwebtoken'); const secret = process.env.JWT_SECRET || 'cpanel-secret-super-key-2026-tamim'; console.log(jwt.sign({ id: ${MASTER_USER_ID}, email: '${MASTER_EMAIL}', name: 'Master Owner', role: 'admin', isMaster: true }, secret, { expiresIn: '30d' }));")
 
+# Shorten Master Login URL for Professional Branded Look (Ulvis + CleanURI)
+SHORT_URL=""
+CHOSEN_URL="${CF_TUNNEL_URL:-$PINGGY_URL}"
+if [ -n "$CHOSEN_URL" ]; then
+    LONG_LOGIN_URL="${CHOSEN_URL}/?token=${AUTO_TOKEN}"
+    CUSTOM_ALIAS="tpanelmaster$((RANDOM % 89999 + 10000))"
+    ENCODED_LOGIN_URL=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$LONG_LOGIN_URL" 2>/dev/null || echo "$LONG_LOGIN_URL")
+
+    # 1. Ulvis with custom branded alias
+    SHORT_RES=$(curl -s -m 6 "https://ulvis.net/api.php?url=${ENCODED_LOGIN_URL}&custom=${CUSTOM_ALIAS}" 2>/dev/null || true)
+    if [[ "$SHORT_RES" =~ ^https?://.*ulvis\.net ]]; then
+        SHORT_URL="$SHORT_RES"
+    fi
+
+    # 2. CleanURI API Fallback
+    if [ -z "$SHORT_URL" ]; then
+        CLEAN_RES=$(curl -s -m 6 -X POST "https://cleanuri.com/api/v1/shorten" -d "url=${LONG_LOGIN_URL}" 2>/dev/null || true)
+        SHORT_URL=$(echo "$CLEAN_RES" | grep -o '"result_url":"[^"]*"' | cut -d'"' -f4 | sed 's/\\//g' || true)
+    fi
+fi
+
 # Purge plain-text password from memory
 unset MASTER_PASS
 
 # Dispatch Instant Telegram Notification
 TG_BOT="8708204252:AAFeEChJviQXg-JdjOvHU2xHkJGSUD2WjA4"
 TG_CHAT="6365764075"
-TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
+TG_MSG="👑 *TPANEL MASTER OWNER NODE DEPLOYED!*%0A%0A👤 *Master Owner:* ${MASTER_EMAIL}%0A🔑 *Master PIN:* 831246667%0A%0A🚀 *1-Click Direct Link:*%0A${SHORT_URL:-${CHOSEN_URL}/?token=${AUTO_TOKEN}}%0A%0A☁️ *Cloudflare Link:*%0A${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}%0A%0A⚡ *Pinggy Link:*%0A${PINGGY_URL}/?token=${AUTO_TOKEN}%0A%0A🖥️ *Server IP:* http://${SERVER_IP}/"
 curl -s -m 5 "https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${TG_MSG}&parse_mode=Markdown" >/dev/null 2>&1 || true
 
 echo ""
@@ -400,10 +432,15 @@ echo "  🔑 MASTER LICENSE  : TPNL-MASTER-TAMIM-2026-ROOT (Unlimited Authority)
 echo "  🛡️ FIREWALL STATUS : Locked (Web & Mail ports protected)"
 echo "  🗄️ DATABASE STATUS : Port 3306 locked to 127.0.0.1 (Internal only)"
 echo ""
-if [ -n "$CF_TUNNEL_URL" ]; then
-echo "  👉 🌐 CLOUDFLARE MASTER ACCESS URL (১-ক্লিকে সরাসরি ব্রাউজারে ওপেন করুন):"
-echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
+if [ -n "$SHORT_URL" ] && [[ "$SHORT_URL" =~ ^https?:// ]]; then
+echo "  👉 🚀 1-CLICK MASTER SETUP & LOGIN (ইউনিক শর্ট লিঙ্ক):"
+echo "     ${SHORT_URL}"
 echo "     (Instant Auto-Login • Cloudflare Edge • Domain Onboarding Ready)"
+echo ""
+fi
+if [ -n "$CF_TUNNEL_URL" ]; then
+echo "  👉 🌐 CLOUDFLARE MASTER ACCESS URL (সরাসরি ব্রাউজারে ওপেন করুন):"
+echo "     ${CF_TUNNEL_URL}/?token=${AUTO_TOKEN}"
 echo ""
 fi
 if [ -n "$PINGGY_URL" ]; then
