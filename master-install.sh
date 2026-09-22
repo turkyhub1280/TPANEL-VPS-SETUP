@@ -327,6 +327,8 @@ systemctl stop tpanel-tunnel.service 2>/dev/null || true
 systemctl stop tpanel-pinggy.service 2>/dev/null || true
 mkdir -p /var/log /etc/tpanel /opt/cpanel-core
 rm -f /var/log/tpanel-tunnel.log /var/log/tpanel-pinggy.log
+touch /var/log/tpanel-tunnel.log /var/log/tpanel-pinggy.log
+chmod 666 /var/log/tpanel-tunnel.log /var/log/tpanel-pinggy.log
 
 # 2. Install Cloudflare Agent if missing
 if ! command -v cloudflared >/dev/null 2>&1; then
@@ -337,7 +339,7 @@ if ! command -v cloudflared >/dev/null 2>&1; then
     chmod +x /usr/local/bin/cloudflared 2>/dev/null || true
 fi
 
-# 3. Launch Cloudflare Tunnel daemon via Systemd (with background fallback)
+# 3. Launch Cloudflare Tunnel daemon via Systemd (HTTP/2 mode for zero UDP blocking)
 CF_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
 if [ -x "$CF_BIN" ]; then
     echo "☁️ Starting Cloudflare Quick Tunnel service..."
@@ -349,7 +351,7 @@ After=network.target cpanel-core.service
 [Service]
 Type=simple
 User=root
-ExecStart=${CF_BIN} tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log
+ExecStart=/bin/sh -c 'exec ${CF_BIN} tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000 > /var/log/tpanel-tunnel.log 2>&1'
 Restart=always
 RestartSec=5
 
@@ -361,7 +363,7 @@ EOF
     systemctl restart tpanel-tunnel.service 2>/dev/null || true
     sleep 2
     if ! pgrep -f "cloudflared" >/dev/null 2>&1; then
-        nohup "${CF_BIN}" tunnel --no-autoupdate --url http://127.0.0.1:3000 --logfile /var/log/tpanel-tunnel.log >/dev/null 2>&1 &
+        nohup "${CF_BIN}" tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000 > /var/log/tpanel-tunnel.log 2>&1 &
     fi
 fi
 
@@ -394,35 +396,38 @@ EOF
 fi
 
 # 5. Extract endpoints & verify reachability
-echo "⏳ Connecting remote tunnels and generating instant HTTPS access URLs..."
+echo -n "⏳ Connecting remote tunnels and generating instant HTTPS access URLs"
 CF_TUNNEL_URL=""
 PINGGY_URL=""
 
-for i in $(seq 1 25); do
+for i in $(seq 1 35); do
     sleep 1
-    if [ -z "$CF_TUNNEL_URL" ] && [ -f /var/log/tpanel-tunnel.log ]; then
-        CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
+    echo -n "."
+    if [ -z "$CF_TUNNEL_URL" ]; then
+        if [ -f /var/log/tpanel-tunnel.log ]; then
+            CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
+        fi
+        if [ -z "$CF_TUNNEL_URL" ]; then
+            CF_TUNNEL_URL=$(journalctl -u tpanel-tunnel.service -n 50 2>/dev/null | grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | grep -v 'api.trycloudflare.com' | head -n 1 || true)
+        fi
     fi
-    if [ -z "$PINGGY_URL" ] && [ -f /var/log/tpanel-pinggy.log ]; then
-        PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+    if [ -z "$PINGGY_URL" ]; then
+        if [ -f /var/log/tpanel-pinggy.log ]; then
+            PINGGY_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+        fi
+        if [ -z "$PINGGY_URL" ]; then
+            PINGGY_URL=$(journalctl -u tpanel-pinggy.service -n 50 2>/dev/null | grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' | head -n 1 || true)
+        fi
     fi
-    if [ -n "$CF_TUNNEL_URL" ] && [ -n "$PINGGY_URL" ]; then
-        break
-    fi
-    if [ -n "$CF_TUNNEL_URL" ] && [ $i -ge 12 ]; then
+    if [ -n "$CF_TUNNEL_URL" ] && [ $i -ge 5 ]; then
         break
     fi
 done
+echo ""
 
-# Verify edge tunnel connectivity
-if [ -n "$CF_TUNNEL_URL" ]; then
-    for k in $(seq 1 8); do
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 2 "${CF_TUNNEL_URL}" 2>/dev/null || true)
-        if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
-            break
-        fi
-        sleep 1
-    done
+# Fallback check
+if [ -z "$CF_TUNNEL_URL" ]; then
+    CF_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
 fi
 
 # Save active tunnel URLs to file and database
@@ -436,7 +441,13 @@ fi
 cat << 'EOF' > /usr/local/bin/tpanel-tunnel
 #!/usr/bin/env bash
 CF_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /var/log/tpanel-tunnel.log 2>/dev/null | grep -v 'api.trycloudflare.com' | head -n 1 || true)
+if [ -z "$CF_U" ]; then
+    CF_U=$(journalctl -u tpanel-tunnel.service -n 50 2>/dev/null | grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | grep -v 'api.trycloudflare.com' | head -n 1 || true)
+fi
 PG_U=$(grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' /var/log/tpanel-pinggy.log 2>/dev/null | head -n 1 || true)
+if [ -z "$PG_U" ]; then
+    PG_U=$(journalctl -u tpanel-pinggy.service -n 50 2>/dev/null | grep -oE 'https://[a-zA-Z0-9-]+\.(run\.pinggy-free\.link|free\.pinggy\.net|a\.pinggy\.link)' | head -n 1 || true)
+fi
 echo "=========================================================================="
 echo "  🌐 TPANEL ACTIVE REMOTE TUNNELS"
 echo "=========================================================================="
@@ -472,13 +483,19 @@ echo ""
 if [ -n "$CF_TUNNEL_URL" ]; then
 echo "  👉 🌐 CLOUDFLARE SECURE ACCESS URL (RECOMMENDED):"
 echo "     ${CF_TUNNEL_URL}/"
-echo "     (Global CDN • Free SSL • Requires Master PIN & Password)"
+echo "     (Global CDN • Free SSL • Requires Master PIN: 831246667)"
 echo ""
 fi
 if [ -n "$PINGGY_URL" ]; then
 echo "  👉 ⚡ PINGGY HIGH-SPEED BACKUP URL:"
 echo "     ${PINGGY_URL}/"
 echo "     (High-Speed Direct Tunnel • Requires Master PIN & Password)"
+echo ""
+fi
+if [ -z "$CF_TUNNEL_URL" ] && [ -z "$PINGGY_URL" ]; then
+echo "  👉 🌐 CLOUDFLARE SECURE ACCESS URL:"
+echo "     (Tunnels are completing initialization in background)"
+echo "     Run 'tpanel-tunnel' anytime to view your live links."
 echo ""
 fi
 echo "  👉 🖥️ DIRECT SERVER IP LOGIN:"
